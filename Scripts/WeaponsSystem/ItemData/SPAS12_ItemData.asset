@@ -1,0 +1,46 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b55b9d7a82b5c0543aff8e8eef2374df, type: 3}
+  m_Name: SPAS12_ItemData
+  m_EditorClassIdentifier: 
+  itemName: SPAS12
+  icon: {fileID: 21300000, guid: 3183a40c2a112a3418039acbacf0c53e, type: 3}
+  slotSize: 3
+  prefab: {fileID: 1056927196312859361, guid: caa70e4664de02440814997348db8d4d, type: 3}
+  isKeyItem: 0
+  keyId: 
+  description: "Strzelba p\xF3\u0142-automatyczna"
+  category: 2
+  weaponSlot: 2
+  fireRate: 1
+  bulletSpeed: 100
+  magazineSize: 8
+  reloadTime: 0.8
+  damage: 36
+  bulletType: Bullet
+  minShotgunDamage: 5
+  shotgunRange: 10
+  recoilPattern:
+  - {x: 0, y: 0}
+  - {x: 0.9, y: 1.8}
+  - {x: 1.1, y: 2}
+  recoilResetTime: 0.3
+  adsFOV: 40
+  isSniper: 0
+  isShotgun: 1
+  carryWeight: 2
+  moveSpeedMultiplier: 0.9
+  staminaDrainMultiplier: 1.18
+  overrideController: {fileID: 22100000, guid: 00300d939e386be40a9d07fc502dc460, type: 2}
+  fireClip: {fileID: 7400000, guid: d503e31b7d2c03444b2cdf2725e5477b, type: 2}
+  reloadClip: {fileID: 7400000, guid: 6f604e93c4118ac45b838a431d71278a, type: 2}
+  pickupClip: {fileID: 7400000, guid: 0f6f709c5397de54887d323aaa8804c3, type: 2}

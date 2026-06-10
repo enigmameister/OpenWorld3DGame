@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b55b9d7a82b5c0543aff8e8eef2374df, type: 3}
+  m_Name: M4A1_ItemData
+  m_EditorClassIdentifier: 
+  itemName: M4A1
+  icon: {fileID: 21300000, guid: b157a1d00c475e44297dbda2455222d3, type: 3}
+  slotSize: 3
+  prefab: {fileID: 1056927196312859361, guid: 7f74c02329fcf054aa52ef916265a252, type: 3}
+  isKeyItem: 0
+  keyId: 
+  description: Karabin szturmowy.
+  category: 2
+  weaponSlot: 2
+  fireRate: 0.08
+  bulletSpeed: 200
+  magazineSize: 20
+  reloadTime: 1.6
+  damage: 25
+  bulletType: Bullet
+  minShotgunDamage: 5
+  shotgunRange: 10
+  recoilPattern:
+  - {x: 0, y: 0}
+  - {x: 0.5, y: 1}
+  - {x: 0.4, y: 1.2}
+  - {x: 0.6, y: 1.1}
+  recoilResetTime: 0.3
+  adsFOV: 40
+  isSniper: 0
+  isShotgun: 0
+  carryWeight: 1
+  moveSpeedMultiplier: 0.92
+  staminaDrainMultiplier: 1.15
+  overrideController: {fileID: 22100000, guid: 1f832c0dd68c8114da528be5160e110b, type: 2}
+  fireClip: {fileID: 0}
+  reloadClip: {fileID: 0}
+  pickupClip: {fileID: 7400000, guid: dcef90785070a7f45bc25a8870907f8b, type: 2}

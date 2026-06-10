@@ -1,0 +1,29 @@
+fileFormatVersion: 2
+guid: 215bb7f37f526a448a987bb20f106d0e
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - weaponData: {instanceID: 0}
+  - sniperCfg: {instanceID: 0}
+  - shotgunCfg: {instanceID: 0}
+  - bulletPrefab: {fileID: 5783399050741087064, guid: 35b49055c0446bc44abd0f5a6bdfa789, type: 3}
+  - firePoint: {instanceID: 0}
+  - hitEffectPrefab: {fileID: 7658637001226918092, guid: 04c85f61a55677646ba48f757751bada, type: 3}
+  - reloadBarRoot: {instanceID: 0}
+  - reloadProgressBar: {instanceID: 0}
+  - recoilController: {instanceID: 0}
+  - adsAnchor: {instanceID: 0}
+  - muzzleFlash: {instanceID: 0}
+  - shellEjectParticles: {instanceID: 0}
+  - playerCamera: {instanceID: 0}
+  - worldCamera: {instanceID: 0}
+  - weaponOverlayCamera: {instanceID: 0}
+  - lookSensitivityTarget: {instanceID: 0}
+  - animator: {instanceID: 0}
+  - visualRoot: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

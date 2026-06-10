@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b55b9d7a82b5c0543aff8e8eef2374df, type: 3}
+  m_Name: Glock_ItemData
+  m_EditorClassIdentifier: 
+  itemName: Glock
+  icon: {fileID: 21300000, guid: 8f900ea2780609041a7e552314b12e34, type: 3}
+  slotSize: 2
+  prefab: {fileID: 1056927196312859361, guid: 0794ff49e013c6f42bf855e7ca72acb7, type: 3}
+  isKeyItem: 0
+  keyId: 
+  description: 'Popularny Glock-17 '
+  category: 1
+  weaponSlot: 1
+  fireRate: 0.2
+  bulletSpeed: 200
+  magazineSize: 15
+  reloadTime: 1.4
+  damage: 18
+  bulletType: Bullet
+  minShotgunDamage: 5
+  shotgunRange: 10
+  recoilPattern:
+  - {x: 0, y: 0}
+  - {x: 0.2, y: 0.6}
+  - {x: 0.1, y: 0.5}
+  - {x: 0.2, y: 0.4}
+  recoilResetTime: 0.25
+  adsFOV: 40
+  isSniper: 0
+  isShotgun: 0
+  carryWeight: 0
+  moveSpeedMultiplier: 1
+  staminaDrainMultiplier: 1
+  overrideController: {fileID: 22100000, guid: f604c65a6f1363549a97521109e86368, type: 2}
+  fireClip: {fileID: 7400000, guid: d146932b38a681f488b5525738b940f4, type: 2}
+  reloadClip: {fileID: 0}
+  pickupClip: {fileID: 7400000, guid: c48c1c54f26a0524c8b21ba537422e65, type: 2}

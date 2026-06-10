@@ -1,0 +1,82 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: Bank_Info
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: What exactly explain?
+    options:
+    - playerText: What is ID and where do I get it?
+      nextNodeId: id_howto
+      debugEvent: 
+    - playerText: How do ATM machines work?
+      nextNodeId: atm_howto
+      debugEvent: 
+    - playerText: Are there any commissions on transactions?
+      nextNodeId: fees
+      debugEvent: 
+    - playerText: How do I know that the system is secure and no one will rob me?
+      nextNodeId: security
+      debugEvent: 
+    - playerText: How to open a bank account and get a credit card?
+      nextNodeId: account_howto
+      debugEvent: 
+    - playerText: Back
+      nextNodeId: graph:Start/start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: id_howto
+    npcText: Every city resident must have a Citizen ID card, which can be obtained
+      at the city hall. The ID card is used to create an account at our bank, and
+      without it, access or viewing the account is impossible.
+    options:
+    - playerText: Back
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: atm_howto
+    npcText: At the ATM, you can perform basic operations such as withdrawing or
+      depositing cash into your account, and blocking your card in case of theft.
+      After three incorrect PIN attempts, your card may be blocked, requiring a visit
+      to one of our staff members.
+    options:
+    - playerText: Back
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: fees
+    npcText: Some of our bank's services incur transaction fees, depending on applicable
+      city taxes. These include loans, transfers, and ATM withdrawals and withdrawals.
+    options:
+    - playerText: Back
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: security
+    npcText: Don't share your credit card PIN with anyone. Report a lost card to
+      your bank as soon as possible.
+    options:
+    - playerText: Back
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: account_howto
+    npcText: To open a bank account, you'll need a city-issued Resident ID card and
+      a $10 fee. The card fee is $5, but it's optional. Transactions can be made
+      on-site or at an ATM.
+    options:
+    - playerText: Back
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  startNodeId: start

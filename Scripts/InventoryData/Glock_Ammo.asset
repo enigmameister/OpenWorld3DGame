@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3c1e1086c74a41e47a7931b35b777747, type: 3}
+  m_Name: Glock_Ammo
+  m_EditorClassIdentifier: 
+  itemName: Glock_Magazine
+  icon: {fileID: 21300000, guid: 9fb5fded624f7af4a8aee84baa148853, type: 3}
+  slotSize: 1
+  prefab: {fileID: 1021354384271854202, guid: e47ee6cb36abe2647a3021ba0be537bf, type: 3}
+  isKeyItem: 0
+  keyId: 
+  description: Glock17 Ammo
+  weapon: {fileID: 11400000, guid: ff851626be1beff44a24d4868a1816a1, type: 2}
+  amountPerUnit: 15

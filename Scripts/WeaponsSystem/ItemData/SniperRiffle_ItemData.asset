@@ -1,0 +1,45 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b55b9d7a82b5c0543aff8e8eef2374df, type: 3}
+  m_Name: SniperRiffle_ItemData
+  m_EditorClassIdentifier: 
+  itemName: SniperRiffle
+  icon: {fileID: 21300000, guid: c67ddde1616ce7d49b40bc367af0bfbd, type: 3}
+  slotSize: 3
+  prefab: {fileID: 1056927196312859361, guid: 30755dc56ecf0ba42b1482613578672e, type: 3}
+  isKeyItem: 0
+  keyId: 
+  description: "Snajperka wysokiej jako\u015Bci"
+  category: 2
+  weaponSlot: 2
+  fireRate: 1.4
+  bulletSpeed: 300
+  magazineSize: 5
+  reloadTime: 2.4
+  damage: 100
+  bulletType: Bullet
+  minShotgunDamage: 5
+  shotgunRange: 10
+  recoilPattern:
+  - {x: 0, y: 0}
+  - {x: 0.8, y: 2.5}
+  recoilResetTime: 1
+  adsFOV: 60
+  isSniper: 1
+  isShotgun: 0
+  carryWeight: 2
+  moveSpeedMultiplier: 0.86
+  staminaDrainMultiplier: 1.22
+  overrideController: {fileID: 22100000, guid: 72b7662f0923f464aa9dc0623f4161dc, type: 2}
+  fireClip: {fileID: 7400000, guid: 7fc5b4553d2c1724197c9899d67adde0, type: 2}
+  reloadClip: {fileID: 0}
+  pickupClip: {fileID: 7400000, guid: 7fc5b4553d2c1724197c9899d67adde0, type: 2}

@@ -1,0 +1,78 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: Bank_Card
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: ID_GATE
+    npcText: I'd like an ID, please. I'm checking the system...
+    options:
+    - playerText: Ok
+      nextNodeId: '@event'
+      debugEvent: CHECK_ID_FOR_CARD
+    - playerText: Back
+      nextNodeId: graph:Start/start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: NO_ID
+    npcText: I need a Citizen ID to access my account. Please return when you have
+      one.
+    options:
+    - playerText: I understand
+      nextNodeId: graph:Start/start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: CHECK_ACCOUNT
+    npcText: I'm checking if you have an account in our bank...
+    options:
+    - playerText: Ok
+      nextNodeId: '@event'
+      debugEvent: CHECK_HAS_ACCOUNT_FOR_CARD
+    - playerText: Back
+      nextNodeId: graph:Start/start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: NO_ACCOUNT
+    npcText: I don't see an account with our bank. First, create an account.
+    options:
+    - playerText: Back
+      nextNodeId: graph:Start/start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: SELECT_CARD
+    npcText: If you have a card, show it/select it. If not, come back when you have
+      it.
+    options:
+    - playerText: I dont have it.
+      nextNodeId: graph:Card/NO_CARD
+      debugEvent: 
+    - playerText: Back
+      nextNodeId: graph:Start/start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: OPERATIONS_MENU
+    npcText: Select card operation.
+    options:
+    - playerText: PIN Change
+      nextNodeId: '@end'
+      debugEvent: 
+    - playerText: Block Card
+      nextNodeId: '@end'
+      debugEvent: 
+    - playerText: Stolen Card
+      nextNodeId: '@end'
+      debugEvent: 
+    - playerText: Back
+      nextNodeId: graph:Start/start
+      debugEvent: 
+    endAfterNpcLine: 0
+  startNodeId: ID_GATE

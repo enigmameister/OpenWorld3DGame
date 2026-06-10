@@ -1,0 +1,63 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: Bank_Account
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: NO_ID
+    npcText: I need a Citizen ID to access my account. Please return when you have
+      one.
+    options:
+    - playerText: Understand
+      nextNodeId: graph:Start/start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: NO_ACCOUNT
+    npcText: I don't see the account assigned to your ID. Create a new account?
+    options:
+    - playerText: Yes
+      nextNodeId: graph:Account/FEE_CONFIRM
+      debugEvent: 
+    - playerText: No
+      nextNodeId: graph:Start/start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: ACCOUNT_CHECK
+    npcText: I'm checking account...
+    options:
+    - playerText: 
+      nextNodeId: '@event'
+      debugEvent: ACCOUNT_CHECK_ACCOUNT
+    endAfterNpcLine: 1
+  - id: SHOW_ID
+    npcText: I would like a resident ID card, please.
+    options:
+    - playerText: 
+      nextNodeId: '@event'
+      debugEvent: WAIT_FOR_ID_CONFIRM
+    endAfterNpcLine: 1
+  - id: FEE_CONFIRM
+    npcText: Please note that setting up an account costs $10. The fee will be charged
+      after completing the application.
+    options:
+    - playerText: 
+      nextNodeId: '@event'
+      debugEvent: WAIT_FOR_FEE_CONFIRM
+    endAfterNpcLine: 1
+  - id: FEE_FAIL
+    npcText: Unfortunately, you don't have enough cash
+    options:
+    - playerText: I understand
+      nextNodeId: graph:Start/start
+      debugEvent: 
+    endAfterNpcLine: 0
+  startNodeId: ACCOUNT_CHECK
