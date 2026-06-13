@@ -107,6 +107,42 @@ public static class InventoryStackService
             : sourceItem.count;
     }
 
+    public static bool IsStackQuickSplitModifierHeld()
+    {
+#if ENABLE_INPUT_SYSTEM
+        Keyboard keyboard = Keyboard.current;
+
+        if (keyboard != null)
+        {
+            return keyboard.leftCtrlKey.isPressed ||
+                   keyboard.rightCtrlKey.isPressed;
+        }
+
+        return false;
+#else
+    return Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+#endif
+    }
+
+    public static int GetQuickSplitHalfAmount(InventoryItemInstance sourceItem, bool sameOwner)
+    {
+        if (sourceItem == null)
+            return 0;
+
+        if (!CanSplitStack(sourceItem))
+            return 0;
+
+        int maxAmount = GetMaxSplitAmount(sourceItem, sameOwner);
+
+        if (maxAmount <= 0)
+            return 0;
+
+        // x4 -> 2, x5 -> 2, x3 -> 1, x2 -> 1
+        int half = Mathf.FloorToInt(sourceItem.count / 2f);
+
+        return Mathf.Clamp(half, 1, maxAmount);
+    }
+
     public static bool TryMergeDraggedStackIntoSlot(
     InventoryItemInstance dragged,
     InventorySlot targetSlot,

@@ -1108,12 +1108,28 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
             IInventorySlotOwner sourceOwner = InventoryUI.DragSourceOwner;
 
-            bool wantsSplit =
+            bool wantsQuickSplit =
+                InventoryStackService.IsStackQuickSplitModifierHeld() &&
+                InventoryStackService.CanSplitStack(draggedItem);
+
+            bool wantsDialogSplit =
                 InventoryStackService.IsStackSplitModifierHeld() &&
                 InventoryStackService.CanSplitStack(draggedItem);
 
-            // SHIFT + split stacka
-            if (wantsSplit)
+            // CTRL + szybki split na pół bez okna
+            if (wantsQuickSplit)
+            {
+                TryQuickSplitDraggedStackToInventorySlot(
+                    placeIndex,
+                    draggedItem,
+                    sourceOwner
+                );
+
+                return;
+            }
+
+            // SHIFT + split stacka z oknem
+            if (wantsDialogSplit)
             {
                 ItemAmountDialog dialog = ItemAmountDialog.Instance;
                 if (dialog == null) return;
@@ -2017,6 +2033,92 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
                 RefreshGunUIFromWeaponManager();
             }
         );
+    }
+
+    public static bool IsStackQuickSplitModifierHeld()
+    {
+        return InventoryStackService.IsStackQuickSplitModifierHeld();
+    }
+
+    public static int GetQuickSplitHalfAmount(InventoryItemInstance sourceItem, bool sameOwner)
+    {
+        return InventoryStackService.GetQuickSplitHalfAmount(sourceItem, sameOwner);
+    }
+
+    private bool TryQuickSplitDraggedStackToInventorySlot(
+    int targetIndex,
+    InventoryItemInstance sourceItem,
+    IInventorySlotOwner splitSource)
+    {
+        if (sourceItem == null || sourceItem.data == null)
+            return false;
+
+        if (splitSource == null)
+            return false;
+
+        bool sameOwner = ReferenceEquals(splitSource, this);
+
+        int amount = InventoryStackService.GetQuickSplitHalfAmount(sourceItem, sameOwner);
+
+        if (amount <= 0)
+            return false;
+
+        InventoryItemInstance part = InventoryStackService.CloneStackPart(sourceItem, amount);
+
+        if (part == null)
+            return false;
+
+        if (grid == null)
+            InitGridController();
+
+        if (grid == null)
+            return false;
+
+        if (!grid.CanFitShape(
+                targetIndex,
+                grid.GetItemWidth(part),
+                grid.GetItemHeight(part)))
+        {
+            return false;
+        }
+
+        // Przywróć wizual źródła zanim zerwiemy drag.
+        if (sourceItem != null)
+            SetDraggingVisualForItem(sourceItem, false);
+
+        HideDragGhost();
+
+        dragController?.ResetPointerOffset();
+        SetDraggedGrabCellOffset(0, 0);
+
+        ClearPlacementPreview();
+
+        draggedSlot = null;
+        ClearSharedDragState();
+
+        RebuildSlotVisualsFromCurrentState();
+        RebuildSlotsLayout();
+        RefreshOccupiedHighlights();
+
+        if (!splitSource.RemoveStackAmountFromOwner(sourceItem, amount))
+            return false;
+
+        if (!TryAddItemAt(targetIndex, part))
+        {
+            // awaryjna cofka, gdyby slot jednak się zmienił między preview a kliknięciem
+            sourceItem.count += amount;
+            RefreshCountDisplay(sourceItem);
+            return false;
+        }
+
+        RebuildSlotVisualsFromCurrentState();
+        RebuildSlotsLayout();
+        RefreshCountDisplay(sourceItem);
+        RefreshCountDisplay(part);
+        RefreshOccupiedHighlights();
+        RefreshGunUIFromWeaponManager();
+
+        return true;
     }
 
     // =====================================================
