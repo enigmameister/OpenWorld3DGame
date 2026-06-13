@@ -275,6 +275,7 @@ public class WeaponPickup : MonoBehaviour
 
         // instancja pickupa (kanoniczna dla UI/WM)
         var newInstance = new InventoryItemInstance(itemData, ammoToUse, totalToUse);
+        newInstance.count = Mathf.Max(1, count);
 
         // --- GRANATY (slot 3, stack) ---
         if (itemData.prefab != null && itemData.prefab.name == "Grenade")

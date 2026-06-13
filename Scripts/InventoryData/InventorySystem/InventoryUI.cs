@@ -12,6 +12,12 @@ using UnityEngine.InputSystem;
 
 public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 {
+    private InventoryGridController grid;
+    private InventoryDragController dragController;
+    private InventoryDropService dropService;
+    private InventoryCashController cashController;
+    private InventoryWeaponBridge weaponBridge;
+
     public static InventoryUI Instance { get; private set; }
     public static bool IsInventoryOpen { get; private set; }
     public static bool IsDraggingInventoryItem { get; private set; }
@@ -23,7 +29,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     [Header("Refs")]
     [SerializeField] private WeaponManager weaponManager;
     [SerializeField] private PlayerStats playerStats;
-    [SerializeField] private PlayerMovement playerMovement;
 
     [Header("World drop")]
     [SerializeField] private LayerMask dropObstacleMask;
@@ -42,7 +47,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     [SerializeField] private int totalSlots = 30;
     [SerializeField] private int slotsPerPage = 20;
     [SerializeField] private int slotsPerRow = 4;
-    private Vector3 dragGhostPointerOffset;
 
     [Header("Tabs")]
     [SerializeField] private Button page1Button;
@@ -57,13 +61,11 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     [Header("Placement Preview")]
     [SerializeField] private Color placementValidColor = new Color(1f, 0.78f, 0.05f, 0.45f);
     [SerializeField] private Color placementInvalidColor = new Color(1f, 0.05f, 0.05f, 0.45f);
-    [SerializeField] private Color placedItemColor = new Color(0.25f, 0.65f, 1f, 0.22f);
 
     [Header("Drag Ghost")]
     [SerializeField] private float dragGhostCellSize = 45f;
     [SerializeField] private float dragGhostScale = 0.9f;
 
-    private readonly List<InventorySlot> placementPreviewSlots = new();
     private InventorySlot lastPreviewStartSlot;
 
     [Header("Money Drop UI")]
@@ -84,8 +86,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     private float fadeSpeed = 10f;
     private readonly float[] currentAlphas = new float[2];
 
-    private Coroutine moneyAnimCo;
-    private int uiCashShown = -1;
 
     private Vector2 dragOffset;
     public static int DraggedGrabCellOffset { get; private set; }
@@ -113,9 +113,10 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     private void Start()
     {
         CacheRefs();
+
         InitUI();
+        InitControllers();
         InitButtons();
-        InitMoneyUI();
     }
 
     private void Update()
@@ -172,16 +173,20 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         UpdateTabAlphaSmooth();
         HandleWindowDrag();
 
-        // ghost za kursorem
-        if (dragGhost != null && dragGhost.gameObject.activeSelf)
-            dragGhost.rectTransform.position = Input.mousePosition + dragGhostPointerOffset;
+        dragController?.UpdateGhostPosition();
+        dragController?.HandleRotationInput();
 
-        HandleDragRotationInput();
-
-        if (draggedItem != null && ReferenceEquals(DragSourceOwner, this))
+        if (draggedItem != null)
         {
             InventorySlot hoverSlot = GetInventorySlotUnderMouse();
-            if (hoverSlot != null)
+
+            // Ważne: InventoryUI ma pokazywać preview tylko na swoich slotach,
+            // ale źródłem draga może być InventoryUI albo BoxInventoryUI.
+            bool hoverInventorySlot =
+                hoverSlot != null &&
+                hoverSlot.owner == this;
+
+            if (hoverInventorySlot)
             {
                 int previewStartIndex =
                     hoverSlot.slotIndex
@@ -269,22 +274,21 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
             if (!overUI && draggedItem != null)
             {
-                if (DragSourceSlot != null)
-                    DragSourceSlot.SetDraggingVisual(false);
-
-                DropDraggedItemToWorld();
-
-                if (dragGhost != null)
-                    dragGhost.gameObject.SetActive(false);
-
-                draggedItem = null;
-                draggedSlot = null;
-                DragSourceOwner = null;
-                DragSourceSlot = null;
-                IsDraggingInventoryItem = false;
+                TryDropDraggedItemToWorldWithDialog();
+                return;
             }
         }
     }
+
+    private void InitControllers()
+    {
+        InitDropService();
+        InitCashController();
+        InitWeaponBridge();
+    }
+
+
+    void OnEnable() => RefreshCashUI();
 
     private void InitSingleton()
     {
@@ -300,9 +304,8 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     {
         if (playerStats == null) playerStats = FindFirstObjectByType<PlayerStats>();
 
-        if (playerMovement == null) playerMovement = FindFirstObjectByType<PlayerMovement>();
-
-        if (weaponManager == null && playerStats != null) weaponManager = playerStats.GetComponentInChildren<WeaponManager>();
+        if (weaponManager == null && playerStats != null)
+            weaponManager = playerStats.GetComponentInChildren<WeaponManager>();
 
         if (moneyDropSpawner == null) moneyDropSpawner = FindFirstObjectByType<MoneyDropSpawner>();
 
@@ -315,8 +318,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         if (gunUI == null) gunUI = FindFirstObjectByType<GunUI>();
 
         if (amountDialog == null) amountDialog = ItemAmountDialog.Instance;
-
-        if (playerStats != null) cachedPlayerTransform = playerStats.transform;
 
         if (Camera.main != null) cachedMainCamera = Camera.main;
 
@@ -338,18 +339,98 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         defaultPosition = inventoryRoot.anchoredPosition;
 
         GenerateSlots(totalSlots);
+        InitGridController();
+        InitDragController();
+
         ShowPage(0);
         ShowPanel(false);
 
         currentAlphas[0] = 1f;
         currentAlphas[1] = 1f;
+    }
 
-        // podepnij PlayerStats moneyText
-        if (playerStats != null && moneyText != null)
-        {
-            playerStats.moneyText = moneyText;
-            playerStats.UpdateMoneyUI();
-        }
+    private void InitGridController()
+    {
+        grid = new InventoryGridController(
+            slotList,
+            slotsPerRow,
+            placementValidColor,
+            placementInvalidColor,
+            () => draggedItem,
+            () => IsDraggingInventoryItem
+        );
+    }
+
+    private void InitDragController()
+    {
+        dragController = new InventoryDragController(
+            dragGhost,
+            dragGhostCellSize,
+            dragGhostScale,
+            () => draggedItem,
+            SetDraggingVisualForItem,
+            ClearPlacementPreview,
+            () =>
+            {
+                if (BoxInventoryUI.Instance != null && BoxInventoryUI.Instance.IsOpen)
+                    BoxInventoryUI.Instance.ClearPlacementPreviewExternal();
+            },
+            RefreshOccupiedHighlights
+        );
+    }
+
+    private void InitDropService()
+    {
+        dropService = new InventoryDropService(
+            this,
+            dropObstacleMask,
+            () =>
+            {
+                if (playerStats == null)
+                    playerStats = FindFirstObjectByType<PlayerStats>();
+
+                return playerStats;
+            }
+        );
+    }
+
+    private void InitCashController()
+    {
+        cashController = new InventoryCashController(
+            this,
+            () =>
+            {
+                if (playerStats == null)
+                    playerStats = FindFirstObjectByType<PlayerStats>();
+
+                return playerStats;
+            },
+            moneyText,
+            cashText
+        );
+
+        cashController.Init();
+    }
+
+    private void InitWeaponBridge()
+    {
+        weaponBridge = new InventoryWeaponBridge(
+            () =>
+            {
+                if (weaponManager == null)
+                    weaponManager = FindFirstObjectByType<WeaponManager>();
+
+                return weaponManager;
+            },
+            () =>
+            {
+                if (gunUI == null)
+                    gunUI = FindFirstObjectByType<GunUI>();
+
+                return gunUI;
+            },
+            BuildOwnedItemsForGunUI
+        );
     }
 
     private void InitButtons()
@@ -372,15 +453,8 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         }
     }
 
-    private void InitMoneyUI()
-    {
-        uiCashShown = (playerStats != null) ? playerStats.money : -1;
-        if (moneyAnimCo != null) StopCoroutine(moneyAnimCo);
-        RefreshCashUI();
-    }
-
-// Dodaje EventTrigger do przycisku: OnPointerDown → onDown, OnPointerUp/Exit → onUpOrExit
-void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
+    // Dodaje EventTrigger do przycisku: OnPointerDown → onDown, OnPointerUp/Exit → onUpOrExit
+    void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
     {
         if (btn == null) return;
         var trig = btn.GetComponent<EventTrigger>();
@@ -503,8 +577,8 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         if (dragGhost != null)
             dragGhost.gameObject.SetActive(false);
 
-        dragGhostPointerOffset = Vector3.zero;
-        DraggedGrabCellOffset = 0;
+        dragController?.ResetPointerOffset();
+        SetDraggedGrabCellOffset(0, 0);
 
         ClearPlacementPreview();
 
@@ -522,9 +596,8 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         if (dragGhost != null)
             dragGhost.gameObject.SetActive(false);
 
-        dragGhostPointerOffset = Vector3.zero;
-        DraggedGrabCellOffset = 0;
-        DraggedGrabCellOffsetY = 0;
+        dragController?.ResetPointerOffset();
+        SetDraggedGrabCellOffset(0, 0);
 
         draggedItem = null;
         draggedSlot = null;
@@ -587,6 +660,9 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             slotList.Add(slot);
             slot.slotIndex = i;
         }
+
+        if (grid != null)
+            grid.SetSlotsPerRow(slotsPerRow);
     }
 
     public bool TryAddItem(InventoryItemInstance instance)
@@ -616,15 +692,18 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                 if (slot == null || slot.item == null)
                     continue;
 
-                if (CanMergeStacks(instance, slot.item))
+                if (InventoryStackService.CanMergeStacks(instance, slot.item))
                 {
                     int addAmount = Mathf.Max(1, instance.count);
 
                     slot.item.count += addAmount;
                     slot.UpdateCountDisplay();
 
-                    if (instance.data is GrenadeItemData && weaponManager != null)
-                        weaponManager.SyncGrenadeSlotFromInventory(instance.data);
+                    if (instance.data is GrenadeItemData)
+                    {
+                        if (weaponBridge == null) InitWeaponBridge();
+                        weaponBridge?.SyncGrenadeSlotFromInventory(instance.data);
+                    }
 
                     RefreshGunUIFromWeaponManager();
                     RefreshOccupiedHighlights();
@@ -647,51 +726,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         }
 
         return false;
-    }
-
-    private bool TryAddItemAt(int startIndex, InventoryItemInstance instance)
-    {
-        if (instance == null || instance.data == null)
-            return false;
-
-        int width = GetItemWidth(instance);
-        int height = GetItemHeight(instance);
-
-        if (!CanFitShape(startIndex, width, height, slotsPerRow))
-            return false;
-
-        for (int y = 0; y < height; y++)
-        {
-            for (int x = 0; x < width; x++)
-            {
-                int index = startIndex + y * slotsPerRow + x;
-                var s = slotList[index];
-
-                s.isOccupied = true;
-                s.item = instance;
-
-                if (x == 0 && y == 0)
-                {
-                    s.SetItem(instance);
-                }
-                else
-                {
-                    if (s.fillImage != null) s.fillImage.SetActive(false);
-                    if (s.borderImage != null) s.borderImage.SetActive(false);
-
-                    if (s.iconImage != null)
-                    {
-                        s.iconImage.sprite = null;
-                        s.iconImage.enabled = false;
-                    }
-
-                    s.SetOccupiedHighlight(true);
-                }
-            }
-        }
-
-        RefreshOccupiedHighlights();
-        return true;
     }
 
     public void DropItem(InventoryItemInstance instance)
@@ -726,296 +760,35 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
     private void SpawnPickup(InventoryItemData data, int currentAmmo = -1, int totalAmmo = -1)
     {
-        GameObject pickupPrefab =
-            (data != null && data.prefab != null)
-                ? data.prefab
-                : Resources.Load<GameObject>($"Pickups/{data.itemName}") ??
-                  Resources.Load<GameObject>($"Pickups/{data.name}");
+        if (dropService == null)
+            InitDropService();
 
-        if (pickupPrefab == null)
-        {
-          //  Debug.LogWarning($"❌ SpawnPickup: Brak prefabu w Resources/Pickups dla: '{data.itemName}' / '{data.name}'");
-            return;
-        }
-
-        if (playerStats == null)
-            playerStats = FindFirstObjectByType<PlayerStats>();
-
-        if (cachedPlayerTransform == null && playerStats != null)
-            cachedPlayerTransform = playerStats.transform;
-
-        var player = playerStats;
-        var t = cachedPlayerTransform;
-
-        // --- wyznacz pozycję przed graczem, z uwzględnieniem ścian ---
-        Vector3 originPos = (t != null ? t.position : Vector3.zero) + Vector3.up * 1.0f;
-        Vector3 fwd = (t != null ? t.forward : Vector3.forward);
-
-        float sphereRadius = 0.25f;
-        float castDistance = 0.8f;
-
-        Vector3 dropPos = originPos + fwd * 0.6f;
-
-        if (t != null)
-        {
-            int mask = (dropObstacleMask.value != 0) ? dropObstacleMask.value : ~0;
-            if (Physics.SphereCast(originPos, sphereRadius, fwd, out RaycastHit hit,
-                                   castDistance, mask, QueryTriggerInteraction.Ignore))
-            {
-                // tuż przed drzwiami/ścianą po stronie gracza
-                dropPos = hit.point - fwd * (sphereRadius + 0.05f);
-                dropPos.y = originPos.y;
-            }
-        }
-
-        // teraz tylko szukamy podłoża pod wybranym punktem
-        Vector3 pos = dropPos + Vector3.up * 0.4f;
-        if (Physics.Raycast(pos, Vector3.down, out RaycastHit ground, 3f, ~0, QueryTriggerInteraction.Ignore))
-            pos = ground.point + ground.normal * 0.05f;
-
-        Quaternion rot = (t != null)
-            ? Quaternion.LookRotation(Vector3.ProjectOnPlane(fwd, Vector3.up), Vector3.up)
-            : Quaternion.identity;
-
-        var dropped = Instantiate(pickupPrefab, pos, rot);
-        GameObjectUtil.CopyTagAndLayer(pickupPrefab, dropped);
-
-        InventoryItemInstance inst;
-        var cardPickup = dropped.GetComponentInChildren<ItemPickup>(true);
-        if (cardPickup != null && data is BankCardItemData)
-        {
-            // tu NIE mamy meta (bo jest tylko InventoryItemData), więc nie inicjalizujemy instancją
-            return;
-        }
-
-        var pickup = dropped.GetComponentInChildren<WeaponPickup>(true);
-        if (pickup == null)
-        {
-           // Debug.LogError("❌ SpawnPickup: Brak komponentu WeaponPickup na prefabie (ani w dzieciach).");
-            return;
-        }
-
-        if (data is AmmoItemData ammoData)
-        {
-            pickup.ammoOnly = true;
-            pickup.itemData = ammoData.weapon;       // do czego pasuje magazynek
-            pickup.ammoInventoryData = ammoData;
-
-            int magAmount = (totalAmmo >= 0) ? totalAmmo
-                           : (currentAmmo >= 0) ? currentAmmo
-                           : ammoData.amountPerUnit;
-
-            inst = new InventoryItemInstance(ammoData, magAmount, magAmount);
-        }
-        else
-        {
-            inst = new InventoryItemInstance(data, currentAmmo, totalAmmo);
-        }
-
-        pickup.Initialize(inst, player ? player.gameObject : null);
-
-        if (inst.data is AmmoItemData && inst.totalAmmo <= 0 && inst.currentAmmo <= 0)
-            pickup.nonInteractable = true;
-
-        if (data is AmmoItemData)
-        {
-            pickup.totalAmmo = inst.totalAmmo;
-            pickup.currentAmmo = inst.currentAmmo;
-        }
-
-        // fizyka + drobny impuls, z ochroną przed auto-pickupem
-        pickup.SetupPhysics(isPickupFromScene: true);
-        pickup.IgnoreAutoPickupFrom(player ? player.gameObject : null, 0.6f);
-
-        var rb = dropped.GetComponentInChildren<Rigidbody>() ?? dropped.GetComponent<Rigidbody>();
-        if (rb != null)
-        {
-            rb.position += Vector3.up * 0.05f;
-            if (t != null)
-            {
-                rb.AddForce(fwd * 2.5f + Vector3.up * 1.0f, ForceMode.Impulse);
-                rb.AddTorque(Random.insideUnitSphere * 1.5f, ForceMode.Impulse);
-            }
-        }
+        dropService?.SpawnPickup(data, currentAmmo, totalAmmo);
     }
-
-    // OVERLOAD: drop z instancji (np. karta z meta)
     private void SpawnPickup(InventoryItemInstance source, int currentAmmo = -1, int totalAmmo = -1)
     {
-        if (source == null || source.data == null) return;
+        if (dropService == null)
+            InitDropService();
 
-        var data = source.data;
-
-        GameObject pickupPrefab =
-            (data.prefab != null) ? data.prefab :
-            Resources.Load<GameObject>($"Pickups/{data.itemName}") ??
-            Resources.Load<GameObject>($"Pickups/{data.name}");
-
-        if (pickupPrefab == null)
-        {
-           // Debug.LogWarning($"❌ SpawnPickup: Brak prefabu w Resources/Pickups dla: '{data.itemName}' / '{data.name}'");
-            return;
-        }
-
-        if (playerStats == null)
-            playerStats = FindFirstObjectByType<PlayerStats>();
-
-        if (cachedPlayerTransform == null && playerStats != null)
-            cachedPlayerTransform = playerStats.transform;
-
-        var player = playerStats;
-        var t = cachedPlayerTransform;
-
-        Vector3 originPos = (t ? t.position : Vector3.zero) + Vector3.up * 1.0f;
-        Vector3 fwd = (t ? t.forward : Vector3.forward);
-
-        float sphereRadius = 0.25f;
-        float castDistance = 0.8f;
-        Vector3 dropPos = originPos + fwd * 0.6f;
-
-        int mask = (dropObstacleMask.value != 0) ? dropObstacleMask.value : ~0;
-        if (t && Physics.SphereCast(originPos, sphereRadius, fwd, out RaycastHit hit,
-                                    castDistance, mask, QueryTriggerInteraction.Ignore))
-        {
-            dropPos = hit.point - fwd * (sphereRadius + 0.05f);
-            dropPos.y = originPos.y;
-        }
-
-        Vector3 pos = dropPos + Vector3.up * 0.4f;
-        if (Physics.Raycast(pos, Vector3.down, out RaycastHit ground, 3f, ~0, QueryTriggerInteraction.Ignore))
-            pos = ground.point + ground.normal * 0.05f;
-
-        Quaternion rot = t
-            ? Quaternion.LookRotation(Vector3.ProjectOnPlane(fwd, Vector3.up), Vector3.up)
-            : Quaternion.identity;
-
-        var dropped = Instantiate(pickupPrefab, pos, rot);
-        GameObjectUtil.CopyTagAndLayer(pickupPrefab, dropped);
-
-        var itemPickup = dropped.GetComponentInChildren<ItemPickup>(true);
-        if (itemPickup != null)
-        {
-            itemPickup.InitializeFromInstance(source);
-            itemPickup.IgnorePickupFor(0.6f);
-        }
-
-        var rb = dropped.GetComponentInChildren<Rigidbody>() ?? dropped.GetComponent<Rigidbody>();
-        if (rb != null && t != null)
-        {
-            rb.position += Vector3.up * 0.05f;
-            rb.AddForce(fwd * 2.5f + Vector3.up * 1.0f, ForceMode.Impulse);
-            rb.AddTorque(Random.insideUnitSphere * 1.5f, ForceMode.Impulse);
-        }
+        dropService?.SpawnPickup(source, currentAmmo, totalAmmo);
     }
 
     private void SpawnBankCard(InventoryItemInstance instance)
     {
-        var data = instance.data as BankCardItemData;
-        if (data == null || data.prefab == null)
-        {
-          //  Debug.LogWarning("❌ SpawnBankCard: Brak prefabu w BankCardItemData.");
-            return;
-        }
+        if (dropService == null)
+            InitDropService();
 
-        if (playerStats == null)
-            playerStats = FindFirstObjectByType<PlayerStats>();
-
-        if (cachedPlayerTransform == null && playerStats != null)
-            cachedPlayerTransform = playerStats.transform;
-
-        var player = playerStats;
-        var t = cachedPlayerTransform;
-
-        Vector3 originPos = (t != null ? t.position : Vector3.zero) + Vector3.up * 1.0f;
-        Vector3 fwd = (t != null ? t.forward : Vector3.forward);
-
-        float sphereRadius = 0.25f;
-        float castDistance = 0.8f;
-        Vector3 dropPos = originPos + fwd * 0.6f;
-
-        int mask = (dropObstacleMask.value != 0) ? dropObstacleMask.value : ~0;
-        if (t != null && Physics.SphereCast(originPos, sphereRadius, fwd, out RaycastHit hit, castDistance, mask, QueryTriggerInteraction.Ignore))
-        {
-            dropPos = hit.point - fwd * (sphereRadius + 0.05f);
-            dropPos.y = originPos.y;
-        }
-
-        Vector3 pos = dropPos + Vector3.up * 0.4f;
-        if (Physics.Raycast(pos, Vector3.down, out RaycastHit ground, 3f, ~0, QueryTriggerInteraction.Ignore))
-            pos = ground.point + ground.normal * 0.05f;
-
-        Quaternion rot = (t != null)
-            ? Quaternion.LookRotation(Vector3.ProjectOnPlane(fwd, Vector3.up), Vector3.up)
-            : Quaternion.identity;
-
-        var dropped = Instantiate(data.prefab, pos, rot);
-        GameObjectUtil.CopyTagAndLayer(data.prefab, dropped);
-
-        // ✅ wstrzyknij meta
-        var pickup = dropped.GetComponentInChildren<ItemPickup>(true);
-        if (pickup != null)
-        {
-            pickup.InitializeFromInstance(instance);
-            pickup.IgnorePickupFor(0.6f); // <— ważne
-        }
-
-        // fizyka impuls jak u Ciebie
-        var rb = dropped.GetComponentInChildren<Rigidbody>() ?? dropped.GetComponent<Rigidbody>();
-        if (rb != null && t != null)
-        {
-            rb.position += Vector3.up * 0.05f;
-            rb.AddForce(fwd * 2.0f + Vector3.up * 1.0f, ForceMode.Impulse);
-            rb.AddTorque(Random.insideUnitSphere * 1.0f, ForceMode.Impulse);
-        }
+        dropService?.SpawnBankCard(instance);
     }
 
-    private bool CanFitItem(int startIndex, int size, int slotsPerRow = 4)
+    private void SpawnDraggedPickupOnly(InventoryItemInstance instance)
     {
-        return CanFitShape(startIndex, Mathf.Max(1, size), 1, slotsPerRow);
+        if (dropService == null)
+            InitDropService();
+
+        dropService?.SpawnDraggedPickupOnly(instance);
     }
 
-    private bool CanFitShape(int startIndex, int width, int height, int rowSize)
-    {
-        if (startIndex < 0)
-            return false;
-
-        if (width <= 0 || height <= 0)
-            return false;
-
-        int startCol = startIndex % rowSize;
-        int startRow = startIndex / rowSize;
-
-        if (startCol + width > rowSize)
-            return false;
-
-        int lastIndex = startIndex + (height - 1) * rowSize + (width - 1);
-        if (lastIndex >= slotList.Count)
-            return false;
-
-        for (int y = 0; y < height; y++)
-        {
-            for (int x = 0; x < width; x++)
-            {
-                int index = startIndex + y * rowSize + x;
-
-                if (index < 0 || index >= slotList.Count)
-                    return false;
-
-                InventorySlot slot = slotList[index];
-
-                if (slot == null)
-                    return false;
-
-                if (slot.CompareTag("LockedSlot"))
-                    return false;
-
-                if (slot.isOccupied)
-                    return false;
-            }
-        }
-
-        return true;
-    }
 
     public bool RemoveItem(InventoryItemInstance instance, int amount)
     {
@@ -1110,49 +883,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
     public bool RemoveItem(InventoryItemInstance instance) => RemoveItem(instance, 1);
 
-    private void ForceRemoveItemCompletely(InventoryItemInstance instance)
-    {
-        if (instance == null)
-            return;
-
-        for (int i = 0; i < slotList.Count; i++)
-        {
-            var s = slotList[i];
-
-            if (s == null || s.item != instance)
-                continue;
-
-            s.isOccupied = false;
-            s.item = null;
-
-            if (s.countText != null)
-            {
-                s.countText.text = "";
-                s.countText.gameObject.SetActive(false);
-            }
-
-            if (s.fillImage != null) s.fillImage.SetActive(true);
-            if (s.borderImage != null) s.borderImage.SetActive(true);
-
-            if (s.iconImage != null)
-            {
-                s.iconImage.enabled = false;
-                s.iconImage.sprite = null;
-                s.iconImage.color = Color.white;
-            }
-
-            s.ClearPlacementPreview();
-            s.ClearOccupiedHighlight();
-
-            s.transform.localScale = Vector3.one;
-
-            var rt = s.GetComponent<RectTransform>();
-            if (rt != null)
-                rt.pivot = new Vector2(0.5f, 0.5f);
-        }
-
-        RefreshOccupiedHighlights();
-    }
 
     public InventoryItemInstance FindKeyItem(string keyId)
     {
@@ -1379,8 +1109,8 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             IInventorySlotOwner sourceOwner = InventoryUI.DragSourceOwner;
 
             bool wantsSplit =
-                IsStackSplitModifierHeld() &&
-                CanSplitStack(draggedItem);
+                InventoryStackService.IsStackSplitModifierHeld() &&
+                InventoryStackService.CanSplitStack(draggedItem);
 
             // SHIFT + split stacka
             if (wantsSplit)
@@ -1406,7 +1136,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
                 HideDragGhost();
 
-                dragGhostPointerOffset = Vector3.zero;
                 DraggedGrabCellOffset = 0;
                 DraggedGrabCellOffsetY = 0;
 
@@ -1428,7 +1157,7 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                     {
                         amount = Mathf.Clamp(amount, 1, maxAmount);
 
-                        InventoryItemInstance part = CloneStackPart(sourceItem, amount);
+                        InventoryItemInstance part = InventoryStackService.CloneStackPart(sourceItem, amount);
                         if (part == null)
                             return;
 
@@ -1653,22 +1382,7 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         return false;
     }
 
-    public List<InventoryItemInstance> GetAllInstancesDistinct()
-    {
-        var set = new HashSet<InventoryItemInstance>();
-        var list = new List<InventoryItemInstance>();
 
-        foreach (var slot in slotList) // slotList masz prywatne, ale tu jesteśmy w InventoryUI
-        {
-            var inst = slot?.item;
-            if (inst == null) continue;
-
-            if (set.Add(inst))
-                list.Add(inst);
-        }
-
-        return list;
-    }
 
     public List<InventoryItemInstance> GetAllBankCards(bool onlyUsable = false)
     {
@@ -1695,18 +1409,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
         return result;
     }
-    public void RefreshCashUI()
-    {
-        if (playerStats == null) playerStats = FindFirstObjectByType<PlayerStats>();
-        if (playerStats == null || cashText == null) return;
-
-        if (cachedPlayerTransform == null && playerStats != null)
-            cachedPlayerTransform = playerStats.transform;
-
-        int v = (uiCashShown >= 0) ? uiCashShown : playerStats.money;
-        cashText.text = $"Cash: {v:n0}$";
-    }
-
     public bool GiveOrDrop(InventoryItemInstance inst)
     {
         if (inst == null) return false;
@@ -1731,64 +1433,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
        // Debug.LogWarning($"[INV] GiveOrDrop: no drop handler for item '{inst.data?.name}'.");
     }
-
-    private float GetMoneyAnimDuration(int delta)
-    {
-        // delta = ile przybywa/ubywa
-        delta = Mathf.Abs(delta);
-
-        // 0..1 na podstawie log10 (duże kwoty szybciej)
-        float t = Mathf.Clamp01(Mathf.Log10(delta + 1f) / 4f); // 10^4 = 10000 -> t ~ 1
-
-        float maxDur = 0.9f;  // małe kwoty
-        float minDur = 0.18f; // duże kwoty
-
-        return Mathf.Lerp(maxDur, minDur, t);
-    }
-
-    private IEnumerator CoAnimateCashUI(int from, int to, float duration)
-    {
-        if (cashText == null) yield break;
-
-        float t = 0f;
-        while (t < duration)
-        {
-            t += Time.unscaledDeltaTime;
-            float a = duration <= 0f ? 1f : Mathf.Clamp01(t / duration);
-
-            int v = Mathf.RoundToInt(Mathf.Lerp(from, to, a));
-            uiCashShown = v;
-            cashText.text = $"Cash: {v:n0}$";
-
-            yield return null;
-        }
-
-        uiCashShown = to;
-        cashText.text = $"Cash: {to:n0}$";
-    }
-
-    public void ApplyMoneyChange(int delta)
-    {
-        if (playerStats == null) playerStats = FindFirstObjectByType<PlayerStats>();
-        if (playerStats == null) return;
-
-        if (cachedPlayerTransform == null && playerStats != null)
-            cachedPlayerTransform = playerStats.transform;
-
-        int before = playerStats.money;
-        int after = Mathf.Max(0, before + delta);
-
-        playerStats.money = after;
-        playerStats.UpdateMoneyUI();
-
-        int fromShown = (uiCashShown >= 0) ? uiCashShown : before;
-        float dur = GetMoneyAnimDuration(after - fromShown);
-
-        if (moneyAnimCo != null) StopCoroutine(moneyAnimCo);
-        moneyAnimCo = StartCoroutine(CoAnimateCashUI(fromShown, after, dur));
-    }
-
-    void OnEnable() => RefreshCashUI();
 
     public bool HasBankCardId(string cardId)
     {
@@ -1852,23 +1496,10 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             return true;
         }
 
-        bool isCombatItem = IsCombatItemData(item.data);
+        if (weaponBridge == null)
+            InitWeaponBridge();
 
-        if (isCombatItem && weaponManager != null)
-        {
-            int weaponIndex = weaponManager.FindSlotIndexForInstance(item);
-
-            if (weaponIndex < 0)
-                weaponIndex = weaponManager.GetWeaponIndex(item);
-
-            if (weaponIndex < 0)
-                weaponIndex = GetCombatSlotIndexFromData(item.data);
-
-            if (weaponIndex >= 0)
-            {
-                weaponManager.ClearSlot(weaponIndex);
-            }
-        }
+        weaponBridge?.RemoveCombatItemIfNeeded(item);
 
         ForceRemoveItemCompletely(item);
 
@@ -1895,99 +1526,10 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         DraggedGrabCellOffsetY = 0;
     }
 
-    public void ShowDragGhost(InventoryItemInstance item, InventorySlot sourceSlot)
+    public static void SetDraggedGrabCellOffset(int x, int y)
     {
-        if (item == null || item.data == null || sourceSlot == null || dragGhost == null)
-            return;
-
-        dragGhost.sprite = item.data.icon;
-        dragGhost.color = Color.white;
-
-        if (item.hasBankCardMeta && BankSystem.Instance != null)
-            dragGhost.color = BankSystem.Instance.GetVariantColor(item.bankCard.colorVariant);
-
-        int size = Mathf.Max(1, item.data.slotSize);
-
-        int width = GetItemWidth(item);
-        int height = GetItemHeight(item);
-
-        RectTransform ghostRect = dragGhost.rectTransform;
-
-        float cellW = dragGhostCellSize * dragGhostScale;
-        float cellH = dragGhostCellSize * dragGhostScale;
-
-        float w = cellW * width;
-        float h = cellH * height;
-
-        ghostRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, w);
-        ghostRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, h);
-
-        ghostRect.localScale = Vector3.one;
-
-        // Zachowaj miejsce złapania itemu.
-        RectTransform sourceRect = null;
-
-        if (sourceSlot.iconImage != null)
-            sourceRect = sourceSlot.iconImage.rectTransform;
-
-        if (sourceRect == null)
-            sourceRect = sourceSlot.GetComponent<RectTransform>();
-
-        dragGhostPointerOffset = sourceRect != null
-            ? sourceRect.position - Input.mousePosition
-            : Vector3.zero;
-
-        float localMouseXFromLeft = (w * 0.5f) - dragGhostPointerOffset.x;
-        float localMouseYFromTop = (h * 0.5f) + dragGhostPointerOffset.y;
-
-        DraggedGrabCellOffset = Mathf.Clamp(
-            Mathf.FloorToInt(localMouseXFromLeft / Mathf.Max(1f, cellW)),
-            0,
-            width - 1
-        );
-
-        DraggedGrabCellOffsetY = Mathf.Clamp(
-            Mathf.FloorToInt(localMouseYFromTop / Mathf.Max(1f, cellH)),
-            0,
-            height - 1
-        );
-
-        ghostRect.position = Input.mousePosition + dragGhostPointerOffset;
-
-        dragGhost.preserveAspect = false;
-        dragGhost.raycastTarget = false;
-
-        dragGhost.transform.SetAsLastSibling();
-        dragGhost.gameObject.SetActive(true);
-
-        // Bezpiecznik: niezależnie od tego, skąd startuje drag,
-        // highlight ma wiedzieć, że item jest w ręce.
-        IsDraggingInventoryItem = true;
-
-        SetDraggingVisualForItem(item, true);
-
-        RefreshOccupiedHighlights();
-        ClearPlacementPreview();
-        lastPreviewStartSlot = null;
-    }
-
-    public void HideDragGhost()
-    {
-        if (dragGhost != null)
-            dragGhost.gameObject.SetActive(false);
-    }
-
-    public int GetUsedSlotCount()
-    {
-        int used = 0;
-
-        foreach (var slot in slotList)
-        {
-            if (slot != null && slot.isOccupied)
-                used++;
-        }
-
-        return used;
+        DraggedGrabCellOffset = Mathf.Max(0, x);
+        DraggedGrabCellOffsetY = Mathf.Max(0, y);
     }
 
     public int GetUnlockedSlotCount()
@@ -1995,180 +1537,136 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         return unlockedSlotCount;
     }
 
-    public bool CanReceiveWeaponFromBox(InventoryItemInstance item)
+
+   
+
+
+
+    private void DropDraggedItemToWorldDirect(
+      InventoryItemInstance sourceItem,
+      IInventorySlotOwner sourceOwner)
     {
-        if (item == null || item.data == null) return false;
+        if (sourceItem == null || sourceItem.data == null)
+            return;
 
-        // Zwykły item zawsze może wejść, jeśli jest miejsce.
-        if (!IsCombatItemData(item.data))
-            return true;
+        SpawnDraggedPickupOnly(sourceItem);
 
-        if (weaponManager == null)
-            weaponManager = FindFirstObjectByType<WeaponManager>();
-
-        if (weaponManager == null) return false;
-
-        int slotIndex = GetCombatSlotIndexFromData(item.data);
-        if (slotIndex < 0) return false;
-
-        // Granaty zostawiamy jako stackowalne na późniejszą logikę ilości.
-        if (slotIndex == 3)
-            return true;
-
-        // Melee/Pistol/Riffle: tylko jedna broń danego typu.
-        return !weaponManager.HasWeapon(slotIndex);
-    }
-
-    public bool RegisterWeaponFromBoxTransfer(InventoryItemInstance item)
-    {
-        if (item == null || item.data == null) return false;
-
-        // Nie broń, nie melee, nie granat — nie rejestrujemy w WeaponManager.
-        if (!IsCombatItemData(item.data))
-            return true;
-
-        if (weaponManager == null)
-            weaponManager = FindFirstObjectByType<WeaponManager>();
-
-        if (weaponManager == null) return false;
-
-        int slotIndex = GetCombatSlotIndexFromData(item.data);
-        if (slotIndex < 0) return false;
-
-        bool isNade = slotIndex == 3;
-
-        if (!isNade && weaponManager.HasWeapon(slotIndex))
-            return false;
-
-        bool wasHands = weaponManager.IsUsingHandsOnly();
-        int previousIndex = weaponManager.GetRawCurrentWeaponIndex();
-
-        if (item.data.prefab == null)
-        {
-            Debug.LogWarning($"[InventoryUI] Item '{item.data.name}' nie ma prefabu.");
-            return false;
-        }
-
-        weaponManager.PickUpWeapon(
-            slotIndex,
-            item.data.prefab.name,
-            item.currentAmmo,
-            item.totalAmmo,
-            item
-        );
-
-        // Transfer z Boxa NIE ma wymuszać zmiany aktywnej broni.
-        if (wasHands)
-        {
-            weaponManager.ActivateHandsOnly();
-        }
-        else if (previousIndex >= 0 &&
-                 previousIndex != slotIndex &&
-                 weaponManager.HasWeapon(previousIndex))
-        {
-            weaponManager.SelectWeapon(previousIndex);
-        }
-
-        RefreshGunUIFromWeaponManager();
-        return true;
-    }
-
-    public void RefreshGunUIFromWeaponManager()
-    {
-        if (weaponManager == null)
-            weaponManager = FindFirstObjectByType<WeaponManager>();
-
-        if (weaponManager == null) return;
-
-        weaponManager.RefreshWeaponHUD();
-
-        if (gunUI == null)
-            gunUI = FindFirstObjectByType<GunUI>();
-
-        if (gunUI == null) return;
-
-        // Ważne: GunUI dostaje itemy z Inventory, ale granaty są zsumowane.
-        var owned = BuildOwnedItemsForGunUI();
-
-        InventoryItemInstance active = weaponManager.IsUsingHandsOnly()
-            ? null
-            : weaponManager.GetActiveInstance();
-
-        gunUI.UpdateWeaponHUD(owned, active);
-    }
-
-    private void DropDraggedItemToWorld()
-    {
-        if (draggedItem == null) return;
-
-        IInventorySlotOwner source = DragSourceOwner;
-
-        // Najpierw spawn na ziemi.
-        SpawnDraggedPickupOnly(draggedItem);
-
-        // Potem usuń z właściwego właściciela: Inventory albo Box.
-        if (source != null)
-        {
-            source.RemoveItemFromOwner(draggedItem);
-        }
+        if (sourceOwner != null)
+            sourceOwner.RemoveItemFromOwner(sourceItem);
         else
-        {
-            RemoveItem(draggedItem, 1);
-        }
+            RemoveItem(sourceItem, 1);
     }
 
-    private void SpawnDraggedPickupOnly(InventoryItemInstance instance)
+    private void TryDropDraggedItemToWorldWithDialog()
     {
-        if (instance == null || instance.data == null) return;
+        if (draggedItem == null || draggedItem.data == null)
+            return;
 
-        if (instance.data is BankCardItemData)
+        InventoryItemInstance sourceItem = draggedItem;
+        IInventorySlotOwner sourceOwner = DragSourceOwner;
+        InventorySlot sourceSlot = DragSourceSlot;
+
+        bool useAmountDialog =
+            InventoryStackService.CanSplitStack(sourceItem) &&
+            sourceItem.count > 1;
+
+        if (!useAmountDialog)
         {
-            SpawnBankCard(instance);
+            DropDraggedItemToWorldDirect(sourceItem, sourceOwner);
+            FinishInventoryDrag();
+            RefreshGunUIFromWeaponManager();
             return;
         }
 
-        int cur = instance.currentAmmo;
-        int tot = instance.totalAmmo;
+        ItemAmountDialog dialog = amountDialog != null ? amountDialog : ItemAmountDialog.Instance;
 
-        if (instance.data is AmmoItemData)
+        if (dialog == null)
         {
-            int mag = Mathf.Max(0, instance.totalAmmo);
-            cur = tot = mag;
+            DropDraggedItemToWorldDirect(sourceItem, sourceOwner);
+            FinishInventoryDrag();
+            RefreshGunUIFromWeaponManager();
+            return;
         }
 
-        SpawnPickup(instance, cur, tot);
-    }
+        int maxAmount = Mathf.Max(1, sourceItem.count);
+        int startAmount = Mathf.CeilToInt(maxAmount / 2f);
 
-    private bool IsCombatItemData(InventoryItemData data)
-    {
-        return data is WeaponItemData
-            || data is MeleeItemData
-            || data is GrenadeItemData;
-    }
+        // Przywróć wizual źródła przed dialogiem.
+        // Dzięki temu Cancel zostawia stack dokładnie tam, gdzie był.
+        if (sourceSlot != null)
+            sourceSlot.SetDraggingVisual(false);
 
-    private int GetCombatSlotIndexFromData(InventoryItemData data)
-    {
-        if (data == null) return -1;
+        SetDraggingVisualForItem(sourceItem, false);
 
-        if (data is WeaponItemData weaponData)
-        {
-            return weaponData.category switch
+        HideDragGhost();
+        ClearPlacementPreview();
+
+        dragController?.ResetPointerOffset();
+        SetDraggedGrabCellOffset(0, 0);
+
+        draggedSlot = null;
+        ClearSharedDragState();
+
+        RebuildSlotVisualsFromCurrentState();
+        RebuildSlotsLayout();
+        RefreshOccupiedHighlights();
+
+        dialog.Open(
+            $"DROP {sourceItem.data.itemName}",
+            1,
+            maxAmount,
+            startAmount,
+            amount =>
             {
-                WeaponCategory.Melees => 0,
-                WeaponCategory.Pistols => 1,
-                WeaponCategory.Riffles => 2,
-                WeaponCategory.Nades => 3,
-                _ => -1
-            };
+                amount = Mathf.Clamp(amount, 1, maxAmount);
+
+                DropStackAmountToWorld(sourceItem, sourceOwner, amount);
+
+                RebuildSlotVisualsFromCurrentState();
+                RebuildSlotsLayout();
+                RefreshOccupiedHighlights();
+                RefreshGunUIFromWeaponManager();
+            },
+            cancel: () =>
+            {
+                RebuildSlotVisualsFromCurrentState();
+                RebuildSlotsLayout();
+                RefreshOccupiedHighlights();
+                RefreshGunUIFromWeaponManager();
+            }
+        );
+    }
+
+    private void DropStackAmountToWorld(
+     InventoryItemInstance sourceItem,
+     IInventorySlotOwner sourceOwner,
+     int amount)
+    {
+        if (sourceItem == null || sourceItem.data == null)
+            return;
+
+        amount = Mathf.Clamp(amount, 1, Mathf.Max(1, sourceItem.count));
+
+        // Spawn fizycznych prefabów 1:1.
+        // DROP x2 = dwa osobne prefabry na ziemi.
+        for (int i = 0; i < amount; i++)
+        {
+            InventoryItemInstance singleDrop =
+                InventoryStackService.CloneStackPart(sourceItem, 1);
+
+            if (singleDrop == null)
+                continue;
+
+            singleDrop.count = 1;
+
+            SpawnDraggedPickupOnly(singleDrop);
         }
 
-        if (data is MeleeItemData)
-            return 0;
-
-        if (data is GrenadeItemData)
-            return 3;
-
-        return -1;
+        // Z inventory/boxa odejmujemy całą wybraną ilość naraz.
+        if (sourceOwner != null)
+            sourceOwner.RemoveStackAmountFromOwner(sourceItem, amount);
+        else
+            RemoveItem(sourceItem, amount);
     }
 
     private void OpenCashDropDialog()
@@ -2213,48 +1711,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                 RefreshCashUI();
             }
         );
-    }
-
-    public static bool IsStackSplitModifierHeld()
-    {
-#if ENABLE_INPUT_SYSTEM
-        var keyboard = UnityEngine.InputSystem.Keyboard.current;
-        return keyboard != null &&
-               (keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed);
-#else
-    return Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-#endif
-    }
-
-    public static bool CanSplitStack(InventoryItemInstance item)
-    {
-        if (item == null || item.data == null) return false;
-        if (item.count <= 1) return false;
-
-        // Bank cards nie powinny być stackowane/dzielone.
-        if (item.data is BankCardItemData || item.hasBankCardMeta)
-            return false;
-
-        // Indywidualne magazynki też raczej NIE, bo każdy magazynek ma własny stan ammo.
-        if (item.data is AmmoItemData ammo && ammo.individualMagazines)
-            return false;
-
-        return true;
-    }
-
-    public static InventoryItemInstance CloneStackPart(InventoryItemInstance source, int amount)
-    {
-        if (source == null || source.data == null) return null;
-
-        amount = Mathf.Clamp(amount, 1, source.count);
-
-        var copy = new InventoryItemInstance(source.data, source.currentAmmo, source.totalAmmo);
-        copy.count = amount;
-
-        // Jeżeli kiedyś będziesz dzielił itemy z meta, tutaj trzeba kopiować meta.
-        // Na teraz bank card wykluczamy z CanSplitStack().
-
-        return copy;
     }
 
     public bool RemoveStackAmountFromOwner(InventoryItemInstance item, int amount)
@@ -2378,99 +1834,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         return data.name;
     }
 
-    private bool TryMergeDraggedStackIntoInventorySlot(InventorySlot targetSlot)
-    {
-        if (targetSlot == null || targetSlot.item == null) return false;
-        if (draggedItem == null || draggedItem.data == null) return false;
-        if (ReferenceEquals(targetSlot.item, draggedItem)) return false;
-
-        InventoryItemInstance sourceItem = draggedItem;
-        InventoryItemInstance targetItem = targetSlot.item;
-
-        if (!CanMergeStacks(sourceItem, targetItem))
-            return false;
-
-        IInventorySlotOwner sourceOwner = DragSourceOwner;
-        if (sourceOwner == null) return false;
-
-        int maxAmount = sourceItem.count;
-        if (maxAmount <= 0) return false;
-
-        bool useDialog = IsStackSplitModifierHeld() && CanSplitStack(sourceItem);
-
-        if (useDialog)
-        {
-            ItemAmountDialog dialog = ItemAmountDialog.Instance;
-            if (dialog == null) return true;
-
-            int startValue = Mathf.CeilToInt(maxAmount / 2f);
-
-            HideDragGhost();
-            ClearSharedDragState();
-            draggedSlot = null;
-
-            dialog.Open(
-                $"MERGE {sourceItem.data.itemName}",
-                1,
-                maxAmount,
-                startValue,
-                amount =>
-                {
-                    amount = Mathf.Clamp(amount, 1, maxAmount);
-                    MergeStackAmountToInventoryTarget(sourceOwner, sourceItem, targetItem, amount);
-                },
-                cancel: null
-            );
-
-            return true;
-        }
-
-        MergeStackAmountToInventoryTarget(sourceOwner, sourceItem, targetItem, maxAmount);
-
-        HideDragGhost();
-        ClearSharedDragState();
-        draggedSlot = null;
-
-        return true;
-    }
-
-    private void MergeStackAmountToInventoryTarget(
-        IInventorySlotOwner sourceOwner,
-        InventoryItemInstance sourceItem,
-        InventoryItemInstance targetItem,
-        int amount)
-    {
-        if (sourceOwner == null || sourceItem == null || targetItem == null) return;
-
-        amount = Mathf.Clamp(amount, 1, sourceItem.count);
-
-        if (!sourceOwner.RemoveStackAmountFromOwner(sourceItem, amount))
-            return;
-
-        targetItem.count += amount;
-        RefreshCountDisplay(targetItem);
-
-        if (targetItem.data is GrenadeItemData && weaponManager != null)
-            weaponManager.SyncGrenadeSlotFromInventory(targetItem.data);
-
-        RefreshGunUIFromWeaponManager();
-    }
-
-    public static bool CanMergeStacks(InventoryItemInstance source, InventoryItemInstance target)
-    {
-        if (source == null || target == null) return false;
-        if (source.data == null || target.data == null) return false;
-        if (source.data != target.data) return false;
-
-        if (source.data is BankCardItemData || source.hasBankCardMeta || target.hasBankCardMeta)
-            return false;
-
-        if (source.data is AmmoItemData ammo && ammo.individualMagazines)
-            return false;
-
-        return source.count > 0 && target.count > 0;
-    }
-
     private void RebuildSlotsLayout()
     {
         if (slotsParentRect != null)
@@ -2494,109 +1857,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
         weaponManager = FindFirstObjectByType<WeaponManager>();
     }
-
-    private void ClearPlacementPreview()
-    {
-        for (int i = 0; i < placementPreviewSlots.Count; i++)
-        {
-            if (placementPreviewSlots[i] != null)
-                placementPreviewSlots[i].ClearPlacementPreview();
-        }
-
-        placementPreviewSlots.Clear();
-        lastPreviewStartSlot = null;
-    }
-
-    private bool CanPlaceDraggedItemAt(int startIndex, InventoryItemInstance item)
-    {
-        if (item == null || item.data == null)
-            return false;
-
-        int width = GetItemWidth(item);
-        int height = GetItemHeight(item);
-
-        if (startIndex < 0)
-            return false;
-
-        int startCol = startIndex % slotsPerRow;
-
-        if (startCol + width > slotsPerRow)
-            return false;
-
-        int lastIndex = startIndex + (height - 1) * slotsPerRow + (width - 1);
-        if (lastIndex >= slotList.Count)
-            return false;
-
-        bool movingInsideThisInventory = ReferenceEquals(DragSourceOwner, this);
-
-        for (int y = 0; y < height; y++)
-        {
-            for (int x = 0; x < width; x++)
-            {
-                int index = startIndex + y * slotsPerRow + x;
-
-                if (index < 0 || index >= slotList.Count)
-                    return false;
-
-                InventorySlot slot = slotList[index];
-
-                if (slot == null)
-                    return false;
-
-                if (slot.CompareTag("LockedSlot"))
-                    return false;
-
-                if (slot.isOccupied)
-                {
-                    bool occupiedBySameDraggedItem =
-                        movingInsideThisInventory &&
-                        slot.item == item;
-
-                    if (!occupiedBySameDraggedItem)
-                        return false;
-                }
-            }
-        }
-
-        return true;
-    }
-
-    private void PreviewPlacement(int startIndex, InventoryItemInstance item)
-    {
-        ClearPlacementPreview();
-
-        if (item == null || item.data == null)
-            return;
-
-        int width = GetItemWidth(item);
-        int height = GetItemHeight(item);
-
-        if (startIndex < 0 || startIndex >= slotList.Count)
-            return;
-
-        bool valid = CanPlaceDraggedItemAt(startIndex, item);
-        Color color = valid ? placementValidColor : placementInvalidColor;
-
-        for (int y = 0; y < height; y++)
-        {
-            for (int x = 0; x < width; x++)
-            {
-                int index = startIndex + y * slotsPerRow + x;
-
-                if (index < 0 || index >= slotList.Count)
-                    continue;
-
-                InventorySlot slot = slotList[index];
-
-                if (slot == null)
-                    continue;
-
-                slot.SetPlacementPreview(true, color);
-                placementPreviewSlots.Add(slot);
-            }
-        }
-    }
-
     private InventorySlot GetInventorySlotUnderMouse()
     {
         if (EventSystem.current == null)
@@ -2629,88 +1889,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         return null;
     }
 
-    private void RefreshOccupiedHighlights()
-    {
-        foreach (var slot in slotList)
-        {
-            if (slot == null)
-                continue;
-
-            bool belongsToDraggedItem =
-                IsDraggingInventoryItem &&
-                draggedItem != null &&
-                slot.item == draggedItem;
-
-            if (belongsToDraggedItem)
-            {
-                slot.ClearOccupiedHighlight();
-                continue;
-            }
-
-            if (slot.isOccupied && slot.item != null)
-                slot.SetOccupiedHighlight(true);
-            else
-                slot.ClearOccupiedHighlight();
-        }
-    }
-
-    private void RebuildSlotVisualsFromCurrentState()
-    {
-        HashSet<InventoryItemInstance> firstSlots = new HashSet<InventoryItemInstance>();
-
-        foreach (var slot in slotList)
-        {
-            if (slot == null)
-                continue;
-
-            if (!slot.isOccupied || slot.item == null)
-            {
-                slot.Clear();
-                continue;
-            }
-
-            bool isFirstSlotOfItem = firstSlots.Add(slot.item);
-
-            if (isFirstSlotOfItem)
-            {
-                slot.SetItem(slot.item);
-            }
-            else
-            {
-                slot.transform.localScale = Vector3.one;
-
-                RectTransform rt = slot.GetComponent<RectTransform>();
-                if (rt != null)
-                    rt.pivot = new Vector2(0.5f, 0.5f);
-
-                if (slot.iconImage != null)
-                {
-                    slot.iconImage.sprite = null;
-                    slot.iconImage.enabled = false;
-                    slot.iconImage.color = Color.white;
-                }
-
-                if (slot.countText != null)
-                {
-                    slot.countText.text = "";
-                    slot.countText.gameObject.SetActive(false);
-                }
-
-                if (slot.fillImage != null)
-                    slot.fillImage.SetActive(false);
-
-                if (slot.borderImage != null)
-                    slot.borderImage.SetActive(false);
-
-                slot.SetOccupiedHighlight(true);
-            }
-
-            slot.ClearPlacementPreview();
-        }
-
-        RefreshOccupiedHighlights();
-    }
-
     private void SetDraggingVisualForItem(InventoryItemInstance item, bool dragging)
     {
         if (item == null)
@@ -2725,83 +1903,188 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         }
     }
 
+    // =====================================================
+    // Grid Controller Wrappers
+    // =====================================================
+
     private int GetItemWidth(InventoryItemInstance item)
     {
-        if (item == null || item.data == null)
-            return 1;
-
-        return Mathf.Max(1, item.WidthSlots);
+        return grid != null ? grid.GetItemWidth(item) : 1;
     }
 
     private int GetItemHeight(InventoryItemInstance item)
     {
-        if (item == null || item.data == null)
-            return 1;
-
-        return Mathf.Max(1, item.HeightSlots);
+        return grid != null ? grid.GetItemHeight(item) : 1;
     }
 
-    private bool DragRotatePressedThisFrame()
+    private bool CanFitShape(int startIndex, int width, int height, int rowSize)
     {
-#if ENABLE_INPUT_SYSTEM
-        return Mouse.current != null && Mouse.current.rightButton.wasPressedThisFrame;
-#else
-    return Input.GetMouseButtonDown(1);
-#endif
+        return grid != null && grid.CanFitShape(startIndex, width, height);
     }
 
-    private void HandleDragRotationInput()
+    private bool CanPlaceDraggedItemAt(int startIndex, InventoryItemInstance item)
     {
-        if (draggedItem == null || draggedItem.data == null)
-            return;
+        return grid != null &&
+               grid.CanPlaceDraggedItemAt(startIndex, item, this, DragSourceOwner);
+    }
 
-        if (!draggedItem.CanRotate)
-            return;
+    private bool TryAddItemAt(int startIndex, InventoryItemInstance instance)
+    {
+        return grid != null && grid.TryPlaceAt(startIndex, instance);
+    }
 
-        if (!DragRotatePressedThisFrame())
-            return;
+    private void ForceRemoveItemCompletely(InventoryItemInstance instance)
+    {
+        grid?.ForceRemoveCompletely(instance);
+    }
 
-        draggedItem.ToggleRotation();
+    private void RefreshOccupiedHighlights()
+    {
+        grid?.RefreshOccupiedHighlights();
+    }
 
-        RebuildDragGhostShapeAfterRotation();
-
-        ClearPlacementPreview();
+    private void ClearPlacementPreview()
+    {
+        grid?.ClearPlacementPreview();
         lastPreviewStartSlot = null;
-
-        if (BoxInventoryUI.Instance != null && BoxInventoryUI.Instance.IsOpen)
-            BoxInventoryUI.Instance.ClearPlacementPreviewExternal();
     }
 
-    private void RebuildDragGhostShapeAfterRotation()
+    private void PreviewPlacement(int startIndex, InventoryItemInstance item)
     {
-        if (dragGhost == null || draggedItem == null || draggedItem.data == null)
-            return;
+        grid?.PreviewPlacement(startIndex, item, this, DragSourceOwner);
+    }
 
-        int width = GetItemWidth(draggedItem);
-        int height = GetItemHeight(draggedItem);
+    private void RebuildSlotVisualsFromCurrentState()
+    {
+        grid?.RebuildSlotVisualsFromCurrentState();
+    }
 
-        float cellW = dragGhostCellSize * dragGhostScale;
-        float cellH = dragGhostCellSize * dragGhostScale;
+    public int GetUsedSlotCount()
+    {
+        return grid != null ? grid.CountUsedSlots() : 0;
+    }
 
-        float w = cellW * width;
-        float h = cellH * height;
+    public List<InventoryItemInstance> GetAllInstancesDistinct()
+    {
+        return grid != null
+            ? grid.GetAllInstancesDistinct()
+            : new List<InventoryItemInstance>();
+    }
 
-        RectTransform ghostRect = dragGhost.rectTransform;
+    // =====================================================
+    // Drag Controller Wrappers
+    // =====================================================
 
-        ghostRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, w);
-        ghostRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, h);
-        ghostRect.localScale = Vector3.one;
+    public void ShowDragGhost(InventoryItemInstance item, InventorySlot sourceSlot)
+    {
+        dragController?.ShowGhost(item, sourceSlot);
+    }
 
-        DraggedGrabCellOffset = Mathf.Clamp(DraggedGrabCellOffset, 0, width - 1);
-        DraggedGrabCellOffsetY = Mathf.Clamp(DraggedGrabCellOffsetY, 0, height - 1);
+    public void HideDragGhost()
+    {
+        dragController?.HideGhost();
+    }
 
-        // Trzymaj pod kursorem aktualnie złapaną kratkę itemu.
-        dragGhostPointerOffset = new Vector3(
-            (w * 0.5f) - ((DraggedGrabCellOffset + 0.5f) * cellW),
-            (-h * 0.5f) + ((DraggedGrabCellOffsetY + 0.5f) * cellH),
-            0f
+    // =====================================================
+    // Stack Service Wrappers
+    // =====================================================
+
+    public static bool IsStackSplitModifierHeld()
+    {
+        return InventoryStackService.IsStackSplitModifierHeld();
+    }
+
+    public static bool CanSplitStack(InventoryItemInstance item)
+    {
+        return InventoryStackService.CanSplitStack(item);
+    }
+
+    public static InventoryItemInstance CloneStackPart(InventoryItemInstance source, int amount)
+    {
+        return InventoryStackService.CloneStackPart(source, amount);
+    }
+
+    private bool TryMergeDraggedStackIntoInventorySlot(InventorySlot targetSlot)
+    {
+        return InventoryStackService.TryMergeDraggedStackIntoSlot(
+            draggedItem,
+            targetSlot,
+            DragSourceOwner,
+            RefreshCountDisplay,
+            () =>
+            {
+                FinishInventoryDrag();
+                RefreshGunUIFromWeaponManager();
+            }
         );
+    }
 
-        ghostRect.position = Input.mousePosition + dragGhostPointerOffset;
+    // =====================================================
+    // InventoryCash Wrappers
+    // =====================================================
+
+    public void RefreshCashUI()
+    {
+        if (cashController == null)
+            InitCashController();
+
+        cashController?.RefreshCashUI();
+    }
+
+    public void ApplyMoneyChange(int delta)
+    {
+        if (cashController == null)
+            InitCashController();
+
+        cashController?.ApplyMoneyChange(delta);
+    }
+
+    // =====================================================
+    // InventoryWeaponBridge Wrappers
+    // =====================================================
+
+    private bool IsCombatItemData(InventoryItemData data)
+    {
+        return InventoryWeaponBridge.IsCombatItemData(data);
+    }
+
+    public bool CanReceiveWeaponFromBox(InventoryItemInstance item)
+    {
+        if (weaponBridge == null)
+            InitWeaponBridge();
+
+        return weaponBridge != null && weaponBridge.CanReceiveWeaponFromBox(item);
+    }
+    
+    public bool RegisterWeaponFromBoxTransfer(InventoryItemInstance item)
+    {
+        if (weaponBridge == null)
+            InitWeaponBridge();
+
+        return weaponBridge != null && weaponBridge.RegisterWeaponFromBoxTransfer(item);
+    }
+
+    public void RefreshGunUIFromWeaponManager()
+    {
+        if (weaponBridge == null)
+            InitWeaponBridge();
+
+        weaponBridge?.RefreshGunUI();
+    }
+
+    public bool TryTransferCombatItemFromBoxToPlayer(
+    InventoryItemInstance item,
+    IInventorySlotOwner boxOwner)
+    {
+        if (weaponBridge == null)
+            InitWeaponBridge();
+
+        return weaponBridge != null &&
+               weaponBridge.TryTransferCombatItemFromBoxToPlayer(
+                   item,
+                   boxOwner,
+                   this,
+                   removeFromPlayerOnFail: () => RemoveItemFromOwner(item)
+               );
     }
 }
