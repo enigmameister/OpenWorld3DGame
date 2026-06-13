@@ -17,6 +17,7 @@ public struct BankCardMeta
     public long activateAt;   // timestamp/“koniec doby” na później (Pending)
 }
 
+
 public class InventoryItemInstance
 {
     public string id { get; private set; } = System.Guid.NewGuid().ToString();
@@ -29,6 +30,51 @@ public class InventoryItemInstance
 
     public BankCardMeta bankCard;
     public bool hasBankCardMeta;
+
+    public bool rotated;
+
+    public bool CanRotate
+    {
+        get
+        {
+            return data != null && data.slotSize > 1;
+        }
+    }
+
+    public int WidthSlots
+    {
+        get
+        {
+            int size = data != null && data.slotSize > 0 ? data.slotSize : 1;
+
+            if (!CanRotate)
+                return 1;
+
+            return rotated ? 1 : size;
+        }
+    }
+
+    public int HeightSlots
+    {
+        get
+        {
+            int size = data != null && data.slotSize > 0 ? data.slotSize : 1;
+
+            if (!CanRotate)
+                return 1;
+
+            return rotated ? size : 1;
+        }
+    }
+
+    public void ToggleRotation()
+    {
+        if (!CanRotate)
+            return;
+
+        rotated = !rotated;
+    }
+
 
     public InventoryItemInstance(InventoryItemData data, int currentAmmo = -1, int totalAmmo = -1)
     {

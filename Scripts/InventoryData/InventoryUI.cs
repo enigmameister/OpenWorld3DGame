@@ -42,6 +42,7 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     [SerializeField] private int totalSlots = 30;
     [SerializeField] private int slotsPerPage = 20;
     [SerializeField] private int slotsPerRow = 4;
+    private Vector3 dragGhostPointerOffset;
 
     [Header("Tabs")]
     [SerializeField] private Button page1Button;
@@ -52,6 +53,18 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     [SerializeField] private TextMeshProUGUI moneyText;
     [SerializeField] private TextMeshProUGUI cashText;
     [SerializeField] private Image dragGhost;
+
+    [Header("Placement Preview")]
+    [SerializeField] private Color placementValidColor = new Color(1f, 0.78f, 0.05f, 0.45f);
+    [SerializeField] private Color placementInvalidColor = new Color(1f, 0.05f, 0.05f, 0.45f);
+    [SerializeField] private Color placedItemColor = new Color(0.25f, 0.65f, 1f, 0.22f);
+
+    [Header("Drag Ghost")]
+    [SerializeField] private float dragGhostCellSize = 45f;
+    [SerializeField] private float dragGhostScale = 0.9f;
+
+    private readonly List<InventorySlot> placementPreviewSlots = new();
+    private InventorySlot lastPreviewStartSlot;
 
     [Header("Money Drop UI")]
     [SerializeField] private Button moneyDropButton;
@@ -75,6 +88,9 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     private int uiCashShown = -1;
 
     private Vector2 dragOffset;
+    public static int DraggedGrabCellOffset { get; private set; }
+    public static int DraggedGrabCellOffsetY { get; private set; }
+
     private bool isDraggingWindow;
     private Vector2 defaultPosition;
 
@@ -158,12 +174,43 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
         // ghost za kursorem
         if (dragGhost != null && dragGhost.gameObject.activeSelf)
-            dragGhost.rectTransform.position = Input.mousePosition;
+            dragGhost.rectTransform.position = Input.mousePosition + dragGhostPointerOffset;
+
+        HandleDragRotationInput();
+
+        if (draggedItem != null && ReferenceEquals(DragSourceOwner, this))
+        {
+            InventorySlot hoverSlot = GetInventorySlotUnderMouse();
+            if (hoverSlot != null)
+            {
+                int previewStartIndex =
+                    hoverSlot.slotIndex
+                    - DraggedGrabCellOffset
+                    - (DraggedGrabCellOffsetY * slotsPerRow);
+
+                if (hoverSlot != lastPreviewStartSlot)
+                {
+                    lastPreviewStartSlot = hoverSlot;
+                    PreviewPlacement(previewStartIndex, draggedItem);
+                }
+            }
+            else
+            {
+                ClearPlacementPreview();
+            }
+        }
+        else
+        {
+            ClearPlacementPreview();
+        }
 
         // reader podczas przeciągania key itemów
         if (draggedItem != null)
         {
-            var cam = Camera.main;
+            if (cachedMainCamera == null)
+                cachedMainCamera = Camera.main;
+
+            var cam = cachedMainCamera;
             if (cam != null)
             {
                 var ray = cam.ScreenPointToRay(Input.mousePosition);
@@ -222,6 +269,9 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
             if (!overUI && draggedItem != null)
             {
+                if (DragSourceSlot != null)
+                    DragSourceSlot.SetDraggingVisual(false);
+
                 DropDraggedItemToWorld();
 
                 if (dragGhost != null)
@@ -363,6 +413,12 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             : inventoryPanel.activeSelf;
 
         bool active = !currentlyVisible;
+
+        // Jeżeli zamykamy inventory podczas dragowania,
+        // najpierw przywróć wizuale slotów, dopiero potem chowaj panel.
+        if (!active)
+            ResetDragState();
+
         IsInventoryOpen = active;
 
         // okienko
@@ -387,18 +443,11 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             inventoryRoot.anchoredPosition = defaultPosition;
             mouseLook?.ResetLook();
 
-            // podgląd
-            characterPreview?.OpenPreview();   // ← bez żadnych warstw
+            characterPreview?.OpenPreview();
 
-            // natychmiast wyłącz ADS/Reload na aktywnej broni
-            // upewnij się, że mamy właściwy WeaponManager z podpiętymi slotami
-            if (weaponManager == null ||
-                weaponManager.GetWeaponSlots() == null ||
-                weaponManager.GetWeaponSlots().Length == 0)
-            {
-                weaponManager = FindObjectsByType<WeaponManager>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)
-                    .FirstOrDefault(w => w.GetWeaponSlots() != null && w.GetWeaponSlots().Length > 0);
-            }
+            RefreshOccupiedHighlights();
+
+            EnsureWeaponManager();
 
             GameObject curSlotObj = null;
             Gun gun = null;
@@ -420,8 +469,10 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                 gun.SendMessage("ForceExitADS", SendMessageOptions.DontRequireReceiver);
             }
         }
+
         else
         {
+
             if (BoxInventoryUI.Instance != null && BoxInventoryUI.Instance.IsOpen)
                 BoxInventoryUI.Instance.Close();
 
@@ -432,7 +483,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             else if (ItemAmountDialog.Instance != null && ItemAmountDialog.Instance.IsOpen)
                 ItemAmountDialog.Instance.Close();
 
-            ResetDragState();
             foreach (var slot in slotList) slot.tooltip?.Hide();
             characterPreview?.ClosePreview();
         }
@@ -442,11 +492,51 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
     private void ResetDragState()
     {
+        InventoryItemInstance itemToRestore = draggedItem;
+
+        if (itemToRestore != null)
+            SetDraggingVisualForItem(itemToRestore, false);
+
+        if (DragSourceSlot != null && DragSourceSlot.item != null)
+            SetDraggingVisualForItem(DragSourceSlot.item, false);
+
         if (dragGhost != null)
             dragGhost.gameObject.SetActive(false);
 
+        dragGhostPointerOffset = Vector3.zero;
+        DraggedGrabCellOffset = 0;
+
+        ClearPlacementPreview();
+
         draggedSlot = null;
+
         ClearSharedDragState();
+
+        RebuildSlotVisualsFromCurrentState();
+        RebuildSlotsLayout();
+        RefreshOccupiedHighlights();
+    }
+
+    private void FinishInventoryDrag()
+    {
+        if (dragGhost != null)
+            dragGhost.gameObject.SetActive(false);
+
+        dragGhostPointerOffset = Vector3.zero;
+        DraggedGrabCellOffset = 0;
+        DraggedGrabCellOffsetY = 0;
+
+        draggedItem = null;
+        draggedSlot = null;
+        DragSourceOwner = null;
+        DragSourceSlot = null;
+        IsDraggingInventoryItem = false;
+
+        ClearPlacementPreview();
+
+        RebuildSlotVisualsFromCurrentState();
+        RebuildSlotsLayout();
+        RefreshOccupiedHighlights();
     }
 
     private void HandleWindowDrag()
@@ -501,6 +591,9 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
     public bool TryAddItem(InventoryItemInstance instance)
     {
+        if (instance == null || instance.data == null)
+            return false;
+
         if (instance.data is AmmoItemData a && a.individualMagazines)
         {
             int payload = Mathf.Max(0, Mathf.Max(instance.totalAmmo, instance.currentAmmo));
@@ -509,24 +602,21 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             instance.count = Mathf.Max(1, instance.count);
         }
 
-        int size = instance.data.slotSize;
-
-        // ⬇️ stack tylko gdy to nie jest "indywidualny magazynek"
+        // Stack tylko gdy to nie jest indywidualny magazynek i nie jest karta bankowa.
         bool isBankCard = instance.data is BankCardItemData || instance.hasBankCardMeta;
 
-        if (isBankCard)
-        {
-          //  Debug.Log($"[INV] ADD BANK CARD: data={instance.data.name}, hasMeta={instance.hasBankCardMeta}, cardId={(instance.hasBankCardMeta ? instance.bankCard.cardId : "NONE")}\n{{System.Environment.StackTrace}}\r\n");
-        }
-
-        bool canStack = !(instance.data is AmmoItemData ammo && ammo.individualMagazines)
-                        && !isBankCard;
+        bool canStack =
+            !(instance.data is AmmoItemData ammo && ammo.individualMagazines) &&
+            !isBankCard;
 
         if (canStack)
         {
             foreach (var slot in slotList)
             {
-                if (slot.item != null && CanMergeStacks(instance, slot.item))
+                if (slot == null || slot.item == null)
+                    continue;
+
+                if (CanMergeStacks(instance, slot.item))
                 {
                     int addAmount = Mathf.Max(1, instance.count);
 
@@ -537,34 +627,21 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                         weaponManager.SyncGrenadeSlotFromInventory(instance.data);
 
                     RefreshGunUIFromWeaponManager();
+                    RefreshOccupiedHighlights();
 
                     return true;
                 }
             }
         }
 
-        for (int i = 0; i <= slotList.Count - size; i++)
+        // Auto-placement 2D:
+        // TryAddItemAt() samo sprawdza WidthSlots / HeightSlots / rotated.
+        for (int index = 0; index < slotList.Count; index++)
         {
-            if (CanFitItem(i, size, slotsPerRow))
+            if (TryAddItemAt(index, instance))
             {
-                for (int j = 0; j < size; j++)
-                {
-                    if (j == 0)
-                    {
-                        slotList[i + j].SetItem(instance);
-                    }
-                    else
-                    {
-                        var s = slotList[i + j];
-                        s.isOccupied = true;
-                        s.item = instance;
-
-                        if (s.fillImage != null) s.fillImage.SetActive(false);
-                        if (s.borderImage != null) s.borderImage.SetActive(false);
-                    }
-                }
-
                 RebuildSlotsLayout();
+                RefreshOccupiedHighlights();
                 return true;
             }
         }
@@ -574,35 +651,46 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
     private bool TryAddItemAt(int startIndex, InventoryItemInstance instance)
     {
-        int size = instance.data.slotSize;
-
-        if (!CanFitItem(startIndex, size, slotsPerRow))
+        if (instance == null || instance.data == null)
             return false;
 
-        if (slotList[startIndex].CompareTag("LockedSlot"))
+        int width = GetItemWidth(instance);
+        int height = GetItemHeight(instance);
+
+        if (!CanFitShape(startIndex, width, height, slotsPerRow))
             return false;
 
-        for (int j = 0; j < size; j++)
+        for (int y = 0; y < height; y++)
         {
-            var s = slotList[startIndex + j];
-            if (j == 0)
+            for (int x = 0; x < width; x++)
             {
-                s.SetItem(instance);
-            }
-            else
-            {
+                int index = startIndex + y * slotsPerRow + x;
+                var s = slotList[index];
+
                 s.isOccupied = true;
                 s.item = instance;
 
-                if (s.fillImage != null) s.fillImage.SetActive(false);
-                if (s.borderImage != null) s.borderImage.SetActive(false);
+                if (x == 0 && y == 0)
+                {
+                    s.SetItem(instance);
+                }
+                else
+                {
+                    if (s.fillImage != null) s.fillImage.SetActive(false);
+                    if (s.borderImage != null) s.borderImage.SetActive(false);
+
+                    if (s.iconImage != null)
+                    {
+                        s.iconImage.sprite = null;
+                        s.iconImage.enabled = false;
+                    }
+
+                    s.SetOccupiedHighlight(true);
+                }
             }
         }
 
-        var rt = slotList[startIndex].GetComponent<RectTransform>();
-        if (rt != null)
-            rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 45f * instance.data.slotSize);
-
+        RefreshOccupiedHighlights();
         return true;
     }
 
@@ -650,8 +738,14 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             return;
         }
 
-        var player = FindFirstObjectByType<PlayerStats>();
-        var t = player != null ? player.transform : null;
+        if (playerStats == null)
+            playerStats = FindFirstObjectByType<PlayerStats>();
+
+        if (cachedPlayerTransform == null && playerStats != null)
+            cachedPlayerTransform = playerStats.transform;
+
+        var player = playerStats;
+        var t = cachedPlayerTransform;
 
         // --- wyznacz pozycję przed graczem, z uwzględnieniem ścian ---
         Vector3 originPos = (t != null ? t.position : Vector3.zero) + Vector3.up * 1.0f;
@@ -763,8 +857,14 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             return;
         }
 
-        var player = FindFirstObjectByType<PlayerStats>();
-        var t = player != null ? player.transform : null;
+        if (playerStats == null)
+            playerStats = FindFirstObjectByType<PlayerStats>();
+
+        if (cachedPlayerTransform == null && playerStats != null)
+            cachedPlayerTransform = playerStats.transform;
+
+        var player = playerStats;
+        var t = cachedPlayerTransform;
 
         Vector3 originPos = (t ? t.position : Vector3.zero) + Vector3.up * 1.0f;
         Vector3 fwd = (t ? t.forward : Vector3.forward);
@@ -817,8 +917,14 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             return;
         }
 
-        var player = FindFirstObjectByType<PlayerStats>();
-        var t = player != null ? player.transform : null;
+        if (playerStats == null)
+            playerStats = FindFirstObjectByType<PlayerStats>();
+
+        if (cachedPlayerTransform == null && playerStats != null)
+            cachedPlayerTransform = playerStats.transform;
+
+        var player = playerStats;
+        var t = cachedPlayerTransform;
 
         Vector3 originPos = (t != null ? t.position : Vector3.zero) + Vector3.up * 1.0f;
         Vector3 fwd = (t != null ? t.forward : Vector3.forward);
@@ -865,14 +971,48 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
     private bool CanFitItem(int startIndex, int size, int slotsPerRow = 4)
     {
-        if (startIndex + size > slotList.Count) return false;
+        return CanFitShape(startIndex, Mathf.Max(1, size), 1, slotsPerRow);
+    }
 
-        int rowStart = startIndex / slotsPerRow;
-        int rowEnd = (startIndex + size - 1) / slotsPerRow;
-        if (rowStart != rowEnd) return false;
+    private bool CanFitShape(int startIndex, int width, int height, int rowSize)
+    {
+        if (startIndex < 0)
+            return false;
 
-        for (int i = 0; i < size; i++)
-            if (slotList[startIndex + i].isOccupied) return false;
+        if (width <= 0 || height <= 0)
+            return false;
+
+        int startCol = startIndex % rowSize;
+        int startRow = startIndex / rowSize;
+
+        if (startCol + width > rowSize)
+            return false;
+
+        int lastIndex = startIndex + (height - 1) * rowSize + (width - 1);
+        if (lastIndex >= slotList.Count)
+            return false;
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int index = startIndex + y * rowSize + x;
+
+                if (index < 0 || index >= slotList.Count)
+                    return false;
+
+                InventorySlot slot = slotList[index];
+
+                if (slot == null)
+                    return false;
+
+                if (slot.CompareTag("LockedSlot"))
+                    return false;
+
+                if (slot.isOccupied)
+                    return false;
+            }
+        }
 
         return true;
     }
@@ -930,6 +1070,7 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             }
 
             instance.count = 0;
+            RefreshOccupiedHighlights();
             return true;
         }
 
@@ -940,6 +1081,9 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             {
                 s.isOccupied = false;
                 s.item = null;
+
+                s.ClearOccupiedHighlight();
+                s.ClearPlacementPreview();
 
                 if (s.countText != null)
                 {
@@ -960,6 +1104,7 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         }
 
         instance.count = 0;
+        RefreshOccupiedHighlights();
         return true;
     }
 
@@ -967,40 +1112,46 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
     private void ForceRemoveItemCompletely(InventoryItemInstance instance)
     {
-        int size = instance.data.slotSize;
+        if (instance == null)
+            return;
 
-        for (int i = 0; i <= slotList.Count - size; i++)
+        for (int i = 0; i < slotList.Count; i++)
         {
-            var slot = slotList[i];
-            if (slot.isOccupied && slot.item == instance)
+            var s = slotList[i];
+
+            if (s == null || s.item != instance)
+                continue;
+
+            s.isOccupied = false;
+            s.item = null;
+
+            if (s.countText != null)
             {
-                for (int j = 0; j < size; j++)
-                {
-                    var s = slotList[i + j];
-                    s.isOccupied = false;
-                    s.item = null;
-
-                    if (s.countText != null)
-                    {
-                        s.countText.text = "";
-                        s.countText.gameObject.SetActive(false);
-                    }
-
-                    if (s.fillImage != null) s.fillImage.SetActive(true);
-                    if (s.borderImage != null) s.borderImage.SetActive(true);
-                    if (s.iconImage != null)
-                    {
-                        s.iconImage.enabled = false;
-                        s.iconImage.sprite = null;
-                    }
-
-                    s.transform.localScale = Vector3.one;
-                }
-                return;
+                s.countText.text = "";
+                s.countText.gameObject.SetActive(false);
             }
+
+            if (s.fillImage != null) s.fillImage.SetActive(true);
+            if (s.borderImage != null) s.borderImage.SetActive(true);
+
+            if (s.iconImage != null)
+            {
+                s.iconImage.enabled = false;
+                s.iconImage.sprite = null;
+                s.iconImage.color = Color.white;
+            }
+
+            s.ClearPlacementPreview();
+            s.ClearOccupiedHighlight();
+
+            s.transform.localScale = Vector3.one;
+
+            var rt = s.GetComponent<RectTransform>();
+            if (rt != null)
+                rt.pivot = new Vector2(0.5f, 0.5f);
         }
 
-      //  Debug.LogWarning($"[InventoryUI] ❌ Nie znaleziono slotów do całkowitego usunięcia dla: {instance.data.itemName}");
+        RefreshOccupiedHighlights();
     }
 
     public InventoryItemInstance FindKeyItem(string keyId)
@@ -1138,48 +1289,73 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
     public void OnSlotClicked(InventorySlot clickedSlot)
     {
+
         int clickedIndex = slotList.IndexOf(clickedSlot);
         if (clickedIndex < 0) return;
 
-        // 1) klik na źródłowy slot -> anuluj drag
+        int placeIndex = clickedIndex;
+
+        if (draggedItem != null)
+        {
+            placeIndex -= DraggedGrabCellOffset;
+            placeIndex -= DraggedGrabCellOffsetY * slotsPerRow;
+        }
+
+        // 1) klik na źródłowy slot -> anuluj drag i odbuduj item 1x2/1x3
         if (draggedItem != null && draggedSlot == clickedSlot)
         {
-            draggedItem = null;
-            if (dragGhost != null)
-                dragGhost.gameObject.SetActive(false);
-
-            draggedSlot = null;
-            IsDraggingInventoryItem = false; // ✅
+            FinishInventoryDrag();
             return;
         }
 
         // 2) DROP NA ZAJĘTY SLOT (np. ammo -> broń)
         if (draggedItem != null && clickedSlot.isOccupied && clickedSlot != draggedSlot)
         {
-            if (TryMergeDraggedStackIntoInventorySlot(clickedSlot))
-                return;
+            // Jeśli kliknięty slot należy do TEGO SAMEGO przeciąganego itemu,
+            // nie traktuj tego jako kolizji. Pozwól spróbować położyć item od tego indeksu.
+            bool clickedOwnDraggedItem =
+                ReferenceEquals(DragSourceOwner, this) &&
+                clickedSlot.item == draggedItem;
 
-            // Ammo (AmmoItemData) ➜ Broń (WeaponItemData) tego samego typu
-            if (draggedItem.data is AmmoItemData ammo &&
-                clickedSlot.item?.data is WeaponItemData wd &&
-                IsCompatible(ammo, wd))
+            if (!clickedOwnDraggedItem)
             {
-                if (TryApplyAmmoToWeapon(draggedItem, clickedSlot.item))
-                {
-                    if (dragGhost != null)
-                        dragGhost.gameObject.SetActive(false);
-
-                    draggedItem = null;
-                    draggedSlot = null;
-                    IsDraggingInventoryItem = false;
+                if (TryMergeDraggedStackIntoInventorySlot(clickedSlot))
                     return;
+
+                if (draggedItem.data is AmmoItemData ammo &&
+                    clickedSlot.item?.data is WeaponItemData wd &&
+                    IsCompatible(ammo, wd))
+                {
+                    if (TryApplyAmmoToWeapon(draggedItem, clickedSlot.item))
+                    {
+                        SetDraggingVisualForItem(draggedItem, false);
+
+                        if (dragGhost != null)
+                            dragGhost.gameObject.SetActive(false);
+
+                        draggedItem = null;
+                        draggedSlot = null;
+                        InventoryUI.DragSourceOwner = null;
+                        InventoryUI.DragSourceSlot = null;
+                        IsDraggingInventoryItem = false;
+
+                        ClearPlacementPreview();
+                        RefreshOccupiedHighlights();
+
+                        return;
+                    }
                 }
+
+                // Zajęty slot innym itemem — nie kasuj draga, tylko zostaw go w ręce.
+                return;
             }
-            // (jeśli chcesz inne „zajęty -> zajęty”, obsłuż tutaj)
+
+            // Jeżeli to własny stary slot tego samego itemu, przechodzimy dalej do dropu.
         }
 
-        // 3) DROP NA PUSTY SLOT
-        if (draggedItem != null && !clickedSlot.isOccupied)
+        // 3) DROP NA SLOT.
+        // Slot może być pusty albo może należeć do tego samego przeciąganego itemu.
+        if (draggedItem != null)
         {
             if (clickedIndex < 0) return;
             if (slotList[clickedIndex].CompareTag("LockedSlot")) return;
@@ -1197,7 +1373,7 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                 }
             }
 
-            if (!CanFitItem(clickedIndex, draggedItem.data.slotSize))
+            if (!CanPlaceDraggedItemAt(placeIndex, draggedItem))
                 return;
 
             IInventorySlotOwner sourceOwner = InventoryUI.DragSourceOwner;
@@ -1212,7 +1388,7 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                 ItemAmountDialog dialog = ItemAmountDialog.Instance;
                 if (dialog == null) return;
 
-                int targetIndex = clickedIndex;
+                int targetIndex = placeIndex;
                 InventoryItemInstance sourceItem = draggedItem;
                 IInventorySlotOwner splitSource = sourceOwner;
 
@@ -1225,9 +1401,23 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                 if (maxAmount <= 0)
                     return;
 
+                if (sourceItem != null)
+                    SetDraggingVisualForItem(sourceItem, false);
+
                 HideDragGhost();
-                ClearSharedDragState();
+
+                dragGhostPointerOffset = Vector3.zero;
+                DraggedGrabCellOffset = 0;
+                DraggedGrabCellOffsetY = 0;
+
+                ClearPlacementPreview();
+
                 draggedSlot = null;
+                ClearSharedDragState();
+
+                RebuildSlotVisualsFromCurrentState();
+                RebuildSlotsLayout();
+                RefreshOccupiedHighlights();
 
                 dialog.Open(
                     $"TRANSFER {sourceItem.data.itemName}",
@@ -1242,15 +1432,18 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                         if (part == null)
                             return;
 
-                        if (!CanFitItem(targetIndex, part.data.slotSize))
+                        if (!CanFitShape(targetIndex, GetItemWidth(part), GetItemHeight(part), slotsPerRow))
                             return;
 
                         if (splitSource != null && splitSource.RemoveStackAmountFromOwner(sourceItem, amount))
                         {
                             TryAddItemAt(targetIndex, part);
 
+                            RebuildSlotVisualsFromCurrentState();
                             RebuildSlotsLayout();
                             RefreshCountDisplay(sourceItem);
+                            RefreshCountDisplay(part);
+                            RefreshOccupiedHighlights();
                             RefreshGunUIFromWeaponManager();
                         }
                     },
@@ -1261,27 +1454,33 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             }
 
             // Normalne przeniesienie całego itemu/stacka
+            InventoryItemInstance movedItem = draggedItem;
+
             if (ReferenceEquals(sourceOwner, this))
             {
-                ForceRemoveItemCompletely(draggedItem);
-                TryAddItemAt(clickedIndex, draggedItem);
+                ForceRemoveItemCompletely(movedItem);
+
+                if (!TryAddItemAt(placeIndex, movedItem))
+                {
+                    TryAddItemAt(draggedOriginSlotIndex, movedItem);
+                    FinishInventoryDrag();
+                    return;
+                }
             }
             else
             {
-                if (TryAddItemAt(clickedIndex, draggedItem))
+                if (TryAddItemAt(placeIndex, movedItem))
                 {
-                    bool removedFromSource = sourceOwner?.RemoveItemFromOwner(draggedItem) ?? false;
+                    bool removedFromSource = sourceOwner?.RemoveItemFromOwner(movedItem) ?? false;
 
-                    if (removedFromSource && IsCombatItemData(draggedItem.data))
+                    if (removedFromSource && IsCombatItemData(movedItem.data))
                     {
-                        if (!RegisterWeaponFromBoxTransfer(draggedItem))
+                        if (!RegisterWeaponFromBoxTransfer(movedItem))
                         {
-                            ForceRemoveItemCompletely(draggedItem);
+                            ForceRemoveItemCompletely(movedItem);
                             RefreshGunUIFromWeaponManager();
 
-                            HideDragGhost();
-                            ClearSharedDragState();
-                            draggedSlot = null;
+                            FinishInventoryDrag();
                             return;
                         }
                     }
@@ -1292,21 +1491,10 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                 }
             }
 
-            RebuildSlotsLayout();
-
-            if (dragGhost != null)
-                dragGhost.gameObject.SetActive(false);
-
-            draggedItem = null;
-            draggedSlot = null;
-            InventoryUI.DragSourceOwner = null;
-            InventoryUI.DragSourceSlot = null;
-            IsDraggingInventoryItem = false;
-
+            FinishInventoryDrag();
             return;
         }
 
-        // 4) ZACZNIJ DRAG ZE SLOTU (tylko gdy NIC nie przeciągasz!)
         if (draggedItem == null && clickedSlot.isOccupied && clickedSlot.item != null)
         {
             draggedItem = clickedSlot.item;
@@ -1316,33 +1504,13 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             InventoryUI.DragSourceOwner = this;
             InventoryUI.DragSourceSlot = clickedSlot;
 
-            if (dragGhost != null && clickedSlot.iconImage != null)
-            {
-                // sprite
-                dragGhost.sprite = draggedItem.data.icon;
-                dragGhost.color = Color.white;
-
-                if (draggedItem != null && draggedItem.hasBankCardMeta && BankSystem.Instance != null)
-                    dragGhost.color = BankSystem.Instance.GetVariantColor(draggedItem.bankCard.colorVariant);
-
-                // bazowy rozmiar = rozmiar ikony w slocie
-                RectTransform src = clickedSlot.iconImage.rectTransform;
-                float baseW = src.rect.width;
-                float baseH = src.rect.height;
-
-                // slot 1 / 2 / 3
-                int size = Mathf.Max(1, draggedItem.data.slotSize);
-                var grt = dragGhost.rectTransform;
-                grt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, baseW * size);
-                grt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, baseH);
-
-                // na wierzch
-                dragGhost.transform.SetAsLastSibling();
-                grt.position = Input.mousePosition;
-                dragGhost.gameObject.SetActive(true);
-            }
-
+            // WAŻNE: najpierw stan drag, dopiero potem ShowDragGhost(),
+            // bo ShowDragGhost() odpala RefreshOccupiedHighlights().
             IsDraggingInventoryItem = true;
+
+            ShowDragGhost(draggedItem, clickedSlot);
+
+            RefreshOccupiedHighlights();
             return;
         }
 
@@ -1373,54 +1541,73 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
     {
         var ammoData = ammoInst.data as AmmoItemData;
         var weaponData = weaponInst.data as WeaponItemData;
-        if (ammoData == null || weaponData == null) return false;
+
+        if (ammoData == null || weaponData == null)
+            return false;
 
         Gun gun = null;
+
         if (weaponManager != null)
         {
             int slotIndex = weaponManager.GetWeaponIndex(weaponInst);
+
             if (slotIndex >= 0)
-                gun = weaponManager.GetWeaponSlots()[slotIndex]?.GetComponentInChildren<Gun>(true);
+            {
+                var slots = weaponManager.GetWeaponSlots();
+
+                if (slots != null && slotIndex < slots.Length && slots[slotIndex] != null)
+                    gun = slots[slotIndex].GetComponentInChildren<Gun>(true);
+            }
         }
 
         int cap = weaponData.magazineSize * 3;
         int reserve = gun != null ? gun.GetTotalAmmo() : weaponInst.totalAmmo;
         int free = Mathf.Max(0, cap - reserve);
-        if (free <= 0) return false;
 
-        // dostępna zawartość TYLKO z tego jednego magazynka
+        if (free <= 0)
+            return false;
+
+        // Dostępna zawartość tylko z tego jednego magazynka/paczki.
         int available = ammoData.individualMagazines
             ? Mathf.Max(0, ammoInst.totalAmmo)
             : Mathf.Max(1, ammoData.amountPerUnit);
 
         int add = Mathf.Min(free, available);
-        if (add <= 0) return false;
+
+        if (add <= 0)
+            return false;
 
         void ConsumeFromMag(int taken)
         {
             if (ammoData.individualMagazines)
             {
                 ammoInst.totalAmmo -= taken;
-                if (ammoInst.totalAmmo < 0) ammoInst.totalAmmo = 0;
-                ammoInst.currentAmmo = ammoInst.totalAmmo;   // ← TRZYMAJ W SYNCHRO!
+
+                if (ammoInst.totalAmmo < 0)
+                    ammoInst.totalAmmo = 0;
+
+                ammoInst.currentAmmo = ammoInst.totalAmmo;
 
                 if (ammoInst.totalAmmo <= 0)
                 {
-                    // ⬇️ zamiast kasować slot – wyrzuć pusty magazynek (+0)
+                    // Pusty magazynek wyrzucany jako +0.
                     SpawnPickup(ammoInst.data, 0, 0);
                     RemoveItem(ammoInst, 1);
                 }
                 else
                 {
-                    RefreshCountDisplay(ammoInst); // częściowe zużycie – odśwież xN
+                    // Częściowe zużycie magazynka.
+                    RefreshCountDisplay(ammoInst);
                 }
             }
             else
             {
-                RemoveItem(ammoInst, 1); // stary tryb „paczki”
+                // Stary tryb paczek amunicji.
+                RemoveItem(ammoInst, 1);
             }
         }
 
+        // Broń aktywna / istnieje Gun — używamy animacji/paska wkładania ammo.
         if (gun != null)
         {
             int toInsert = add;
@@ -1429,42 +1616,21 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                 toInsert,
                 onApplied: () =>
                 {
-                    // zużyj magazynek DOPIERO po zakończeniu paska
                     ConsumeFromMag(toInsert);
+                    RefreshGunUIFromWeaponManager();
+                }
+            );
 
-                    // odśwież HUD
-                    var gunUI = FindFirstObjectByType<GunUI>();
-                    if (gunUI != null && weaponManager != null)
-                    {
-                        var owned = weaponManager.GetWeaponSlots()
-                            .Where(s => s != null)
-                            .Select(s => s.GetComponentInChildren<Gun>()?.inventoryInstance
-                                      ?? s.GetComponentInChildren<Grenade>()?.inventoryInstance
-                                      ?? s.GetComponentInChildren<Melee>()?.inventoryInstance)
-                            .Where(i => i != null).ToList();
-                        gunUI.UpdateWeaponHUD(owned, gun.inventoryInstance);
-                    }
-                });
-
-            // jeśli rozpoczęto animację/pasek – kończ tę ścieżkę
-            if (started) return true;
+            if (started)
+                return true;
         }
 
-        // broń nieaktywna (brak Gun) – dołóż do zapasu zapisanego w instancji broni
+        // Broń nieaktywna albo brak Gun — dopisz ammo bezpośrednio do instancji broni.
         weaponInst.totalAmmo = Mathf.Min(cap, weaponInst.totalAmmo + add);
-        ConsumeFromMag(add);
 
-        var gunUI2 = FindFirstObjectByType<GunUI>();
-        if (gunUI2 != null && weaponManager != null)
-        {
-            var owned = weaponManager.GetWeaponSlots()
-                .Where(s => s != null)
-                .Select(s => s.GetComponentInChildren<Gun>()?.inventoryInstance
-                          ?? s.GetComponentInChildren<Grenade>()?.inventoryInstance
-                          ?? s.GetComponentInChildren<Melee>()?.inventoryInstance)
-                .Where(i => i != null).ToList();
-            gunUI2.UpdateWeaponHUD(owned, weaponInst);
-        }
+        ConsumeFromMag(add);
+        RefreshGunUIFromWeaponManager();
+
         return true;
     }
 
@@ -1534,6 +1700,9 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         if (playerStats == null) playerStats = FindFirstObjectByType<PlayerStats>();
         if (playerStats == null || cashText == null) return;
 
+        if (cachedPlayerTransform == null && playerStats != null)
+            cachedPlayerTransform = playerStats.transform;
+
         int v = (uiCashShown >= 0) ? uiCashShown : playerStats.money;
         cashText.text = $"Cash: {v:n0}$";
     }
@@ -1602,6 +1771,9 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
     {
         if (playerStats == null) playerStats = FindFirstObjectByType<PlayerStats>();
         if (playerStats == null) return;
+
+        if (cachedPlayerTransform == null && playerStats != null)
+            cachedPlayerTransform = playerStats.transform;
 
         int before = playerStats.money;
         int after = Mathf.Max(0, before + delta);
@@ -1719,11 +1891,13 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         DragSourceOwner = null;
         DragSourceSlot = null;
         IsDraggingInventoryItem = false;
+        DraggedGrabCellOffset = 0;
+        DraggedGrabCellOffsetY = 0;
     }
 
     public void ShowDragGhost(InventoryItemInstance item, InventorySlot sourceSlot)
     {
-        if (item == null || sourceSlot == null || dragGhost == null || sourceSlot.iconImage == null)
+        if (item == null || item.data == null || sourceSlot == null || dragGhost == null)
             return;
 
         dragGhost.sprite = item.data.icon;
@@ -1732,19 +1906,69 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
         if (item.hasBankCardMeta && BankSystem.Instance != null)
             dragGhost.color = BankSystem.Instance.GetVariantColor(item.bankCard.colorVariant);
 
-        RectTransform src = sourceSlot.iconImage.rectTransform;
-        float baseW = src.rect.width;
-        float baseH = src.rect.height;
-
         int size = Mathf.Max(1, item.data.slotSize);
 
-        RectTransform grt = dragGhost.rectTransform;
-        grt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, baseW * size);
-        grt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, baseH);
+        int width = GetItemWidth(item);
+        int height = GetItemHeight(item);
+
+        RectTransform ghostRect = dragGhost.rectTransform;
+
+        float cellW = dragGhostCellSize * dragGhostScale;
+        float cellH = dragGhostCellSize * dragGhostScale;
+
+        float w = cellW * width;
+        float h = cellH * height;
+
+        ghostRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, w);
+        ghostRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, h);
+
+        ghostRect.localScale = Vector3.one;
+
+        // Zachowaj miejsce złapania itemu.
+        RectTransform sourceRect = null;
+
+        if (sourceSlot.iconImage != null)
+            sourceRect = sourceSlot.iconImage.rectTransform;
+
+        if (sourceRect == null)
+            sourceRect = sourceSlot.GetComponent<RectTransform>();
+
+        dragGhostPointerOffset = sourceRect != null
+            ? sourceRect.position - Input.mousePosition
+            : Vector3.zero;
+
+        float localMouseXFromLeft = (w * 0.5f) - dragGhostPointerOffset.x;
+        float localMouseYFromTop = (h * 0.5f) + dragGhostPointerOffset.y;
+
+        DraggedGrabCellOffset = Mathf.Clamp(
+            Mathf.FloorToInt(localMouseXFromLeft / Mathf.Max(1f, cellW)),
+            0,
+            width - 1
+        );
+
+        DraggedGrabCellOffsetY = Mathf.Clamp(
+            Mathf.FloorToInt(localMouseYFromTop / Mathf.Max(1f, cellH)),
+            0,
+            height - 1
+        );
+
+        ghostRect.position = Input.mousePosition + dragGhostPointerOffset;
+
+        dragGhost.preserveAspect = false;
+        dragGhost.raycastTarget = false;
 
         dragGhost.transform.SetAsLastSibling();
-        grt.position = Input.mousePosition;
         dragGhost.gameObject.SetActive(true);
+
+        // Bezpiecznik: niezależnie od tego, skąd startuje drag,
+        // highlight ma wiedzieć, że item jest w ręce.
+        IsDraggingInventoryItem = true;
+
+        SetDraggingVisualForItem(item, true);
+
+        RefreshOccupiedHighlights();
+        ClearPlacementPreview();
+        lastPreviewStartSlot = null;
     }
 
     public void HideDragGhost()
@@ -1871,33 +2095,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
             : weaponManager.GetActiveInstance();
 
         gunUI.UpdateWeaponHUD(owned, active);
-    }
-
-    private List<InventoryItemInstance> BuildOwnedWeaponInstancesFromWeaponManager()
-    {
-        var result = new List<InventoryItemInstance>();
-
-        if (weaponManager == null) return result;
-
-        var slots = weaponManager.GetWeaponSlots();
-        if (slots == null) return result;
-
-        for (int i = 0; i < slots.Length; i++)
-        {
-            GameObject slotObj = slots[i];
-            if (slotObj == null) continue;
-
-            InventoryItemInstance inst = null;
-
-            var provider = slotObj.GetComponentInChildren<IInventoryItemInstanceProvider>(true);
-            if (provider != null)
-                inst = provider.GetInstance();
-
-            if (inst != null && !result.Contains(inst))
-                result.Add(inst);
-        }
-
-        return result;
     }
 
     private void DropDraggedItemToWorld()
@@ -2130,7 +2327,6 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
                !string.IsNullOrEmpty(bKey) &&
                aKey == bKey;
     }
-
     private List<InventoryItemInstance> BuildOwnedItemsForGunUI()
     {
         var result = new List<InventoryItemInstance>();
@@ -2138,7 +2334,14 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
 
         foreach (var inst in GetAllInstancesDistinct())
         {
-            if (inst == null || inst.data == null) continue;
+            if (inst == null || inst.data == null)
+                continue;
+
+            // GunUI ma dostawać TYLKO broń/melee/granaty.
+            // Keycardy, ammo, itemy questowe itd. nie mogą tu trafiać,
+            // bo zwykły InventoryItemData domyślnie zwraca WeaponSlot.Riffles.
+            if (!IsCombatItemData(inst.data))
+                continue;
 
             if (inst.data is GrenadeItemData)
             {
@@ -2272,5 +2475,333 @@ void AddHold(Button btn, System.Action onDown, System.Action onUpOrExit)
     {
         if (slotsParentRect != null)
             LayoutRebuilder.ForceRebuildLayoutImmediate(slotsParentRect);
+    }
+
+    private void EnsureWeaponManager()
+    {
+        if (weaponManager != null &&
+            weaponManager.GetWeaponSlots() != null &&
+            weaponManager.GetWeaponSlots().Length > 0)
+            return;
+
+        if (playerStats != null)
+            weaponManager = playerStats.GetComponentInChildren<WeaponManager>();
+
+        if (weaponManager != null &&
+            weaponManager.GetWeaponSlots() != null &&
+            weaponManager.GetWeaponSlots().Length > 0)
+            return;
+
+        weaponManager = FindFirstObjectByType<WeaponManager>();
+    }
+
+    private void ClearPlacementPreview()
+    {
+        for (int i = 0; i < placementPreviewSlots.Count; i++)
+        {
+            if (placementPreviewSlots[i] != null)
+                placementPreviewSlots[i].ClearPlacementPreview();
+        }
+
+        placementPreviewSlots.Clear();
+        lastPreviewStartSlot = null;
+    }
+
+    private bool CanPlaceDraggedItemAt(int startIndex, InventoryItemInstance item)
+    {
+        if (item == null || item.data == null)
+            return false;
+
+        int width = GetItemWidth(item);
+        int height = GetItemHeight(item);
+
+        if (startIndex < 0)
+            return false;
+
+        int startCol = startIndex % slotsPerRow;
+
+        if (startCol + width > slotsPerRow)
+            return false;
+
+        int lastIndex = startIndex + (height - 1) * slotsPerRow + (width - 1);
+        if (lastIndex >= slotList.Count)
+            return false;
+
+        bool movingInsideThisInventory = ReferenceEquals(DragSourceOwner, this);
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int index = startIndex + y * slotsPerRow + x;
+
+                if (index < 0 || index >= slotList.Count)
+                    return false;
+
+                InventorySlot slot = slotList[index];
+
+                if (slot == null)
+                    return false;
+
+                if (slot.CompareTag("LockedSlot"))
+                    return false;
+
+                if (slot.isOccupied)
+                {
+                    bool occupiedBySameDraggedItem =
+                        movingInsideThisInventory &&
+                        slot.item == item;
+
+                    if (!occupiedBySameDraggedItem)
+                        return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private void PreviewPlacement(int startIndex, InventoryItemInstance item)
+    {
+        ClearPlacementPreview();
+
+        if (item == null || item.data == null)
+            return;
+
+        int width = GetItemWidth(item);
+        int height = GetItemHeight(item);
+
+        if (startIndex < 0 || startIndex >= slotList.Count)
+            return;
+
+        bool valid = CanPlaceDraggedItemAt(startIndex, item);
+        Color color = valid ? placementValidColor : placementInvalidColor;
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int index = startIndex + y * slotsPerRow + x;
+
+                if (index < 0 || index >= slotList.Count)
+                    continue;
+
+                InventorySlot slot = slotList[index];
+
+                if (slot == null)
+                    continue;
+
+                slot.SetPlacementPreview(true, color);
+                placementPreviewSlots.Add(slot);
+            }
+        }
+    }
+
+    private InventorySlot GetInventorySlotUnderMouse()
+    {
+        if (EventSystem.current == null)
+            return null;
+
+        if (cachedPointerData == null)
+            cachedPointerData = new PointerEventData(EventSystem.current);
+
+        cachedPointerData.position = Input.mousePosition;
+
+        uiRaycastResults.Clear();
+        EventSystem.current.RaycastAll(cachedPointerData, uiRaycastResults);
+
+        for (int i = 0; i < uiRaycastResults.Count; i++)
+        {
+            GameObject go = uiRaycastResults[i].gameObject;
+            if (go == null)
+                continue;
+
+            InventorySlot slot = go.GetComponentInParent<InventorySlot>();
+
+            if (slot == null)
+                continue;
+
+            // Preview tylko dla slotów gracza, nie Boxa.
+            if (slot.owner == this)
+                return slot;
+        }
+
+        return null;
+    }
+
+    private void RefreshOccupiedHighlights()
+    {
+        foreach (var slot in slotList)
+        {
+            if (slot == null)
+                continue;
+
+            bool belongsToDraggedItem =
+                IsDraggingInventoryItem &&
+                draggedItem != null &&
+                slot.item == draggedItem;
+
+            if (belongsToDraggedItem)
+            {
+                slot.ClearOccupiedHighlight();
+                continue;
+            }
+
+            if (slot.isOccupied && slot.item != null)
+                slot.SetOccupiedHighlight(true);
+            else
+                slot.ClearOccupiedHighlight();
+        }
+    }
+
+    private void RebuildSlotVisualsFromCurrentState()
+    {
+        HashSet<InventoryItemInstance> firstSlots = new HashSet<InventoryItemInstance>();
+
+        foreach (var slot in slotList)
+        {
+            if (slot == null)
+                continue;
+
+            if (!slot.isOccupied || slot.item == null)
+            {
+                slot.Clear();
+                continue;
+            }
+
+            bool isFirstSlotOfItem = firstSlots.Add(slot.item);
+
+            if (isFirstSlotOfItem)
+            {
+                slot.SetItem(slot.item);
+            }
+            else
+            {
+                slot.transform.localScale = Vector3.one;
+
+                RectTransform rt = slot.GetComponent<RectTransform>();
+                if (rt != null)
+                    rt.pivot = new Vector2(0.5f, 0.5f);
+
+                if (slot.iconImage != null)
+                {
+                    slot.iconImage.sprite = null;
+                    slot.iconImage.enabled = false;
+                    slot.iconImage.color = Color.white;
+                }
+
+                if (slot.countText != null)
+                {
+                    slot.countText.text = "";
+                    slot.countText.gameObject.SetActive(false);
+                }
+
+                if (slot.fillImage != null)
+                    slot.fillImage.SetActive(false);
+
+                if (slot.borderImage != null)
+                    slot.borderImage.SetActive(false);
+
+                slot.SetOccupiedHighlight(true);
+            }
+
+            slot.ClearPlacementPreview();
+        }
+
+        RefreshOccupiedHighlights();
+    }
+
+    private void SetDraggingVisualForItem(InventoryItemInstance item, bool dragging)
+    {
+        if (item == null)
+            return;
+
+        for (int i = 0; i < slotList.Count; i++)
+        {
+            InventorySlot slot = slotList[i];
+
+            if (slot != null && slot.item == item)
+                slot.SetDraggingVisual(dragging);
+        }
+    }
+
+    private int GetItemWidth(InventoryItemInstance item)
+    {
+        if (item == null || item.data == null)
+            return 1;
+
+        return Mathf.Max(1, item.WidthSlots);
+    }
+
+    private int GetItemHeight(InventoryItemInstance item)
+    {
+        if (item == null || item.data == null)
+            return 1;
+
+        return Mathf.Max(1, item.HeightSlots);
+    }
+
+    private bool DragRotatePressedThisFrame()
+    {
+#if ENABLE_INPUT_SYSTEM
+        return Mouse.current != null && Mouse.current.rightButton.wasPressedThisFrame;
+#else
+    return Input.GetMouseButtonDown(1);
+#endif
+    }
+
+    private void HandleDragRotationInput()
+    {
+        if (draggedItem == null || draggedItem.data == null)
+            return;
+
+        if (!draggedItem.CanRotate)
+            return;
+
+        if (!DragRotatePressedThisFrame())
+            return;
+
+        draggedItem.ToggleRotation();
+
+        RebuildDragGhostShapeAfterRotation();
+
+        ClearPlacementPreview();
+        lastPreviewStartSlot = null;
+
+        if (BoxInventoryUI.Instance != null && BoxInventoryUI.Instance.IsOpen)
+            BoxInventoryUI.Instance.ClearPlacementPreviewExternal();
+    }
+
+    private void RebuildDragGhostShapeAfterRotation()
+    {
+        if (dragGhost == null || draggedItem == null || draggedItem.data == null)
+            return;
+
+        int width = GetItemWidth(draggedItem);
+        int height = GetItemHeight(draggedItem);
+
+        float cellW = dragGhostCellSize * dragGhostScale;
+        float cellH = dragGhostCellSize * dragGhostScale;
+
+        float w = cellW * width;
+        float h = cellH * height;
+
+        RectTransform ghostRect = dragGhost.rectTransform;
+
+        ghostRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, w);
+        ghostRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, h);
+        ghostRect.localScale = Vector3.one;
+
+        DraggedGrabCellOffset = Mathf.Clamp(DraggedGrabCellOffset, 0, width - 1);
+        DraggedGrabCellOffsetY = Mathf.Clamp(DraggedGrabCellOffsetY, 0, height - 1);
+
+        // Trzymaj pod kursorem aktualnie złapaną kratkę itemu.
+        dragGhostPointerOffset = new Vector3(
+            (w * 0.5f) - ((DraggedGrabCellOffset + 0.5f) * cellW),
+            (-h * 0.5f) + ((DraggedGrabCellOffsetY + 0.5f) * cellH),
+            0f
+        );
+
+        ghostRect.position = Input.mousePosition + dragGhostPointerOffset;
     }
 }

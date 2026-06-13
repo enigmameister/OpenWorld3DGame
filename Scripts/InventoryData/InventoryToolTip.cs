@@ -10,6 +10,8 @@ public class InventoryTooltip : MonoBehaviour
     [Header("Refs")]
     public RectTransform root;          // ToolTip (RectTransform)
     public RectTransform body;          // Body (RectTransform)
+    public RectTransform border;
+    public RectTransform fill;
 
     [Header("Teksty / wiersze")]
     public TextMeshProUGUI nameText;
@@ -33,6 +35,16 @@ public class InventoryTooltip : MonoBehaviour
     public float tooltipWidth = 180f;   // stała szerokość tooltipa
     public Vector2 screenMargin = new Vector2(8f, 8f);
 
+    [Header("Auto size")]
+    [SerializeField] private float minWidth = 90f;
+    [SerializeField] private float maxWidth = 220f;
+    [SerializeField] private float minHeight = 32f;
+    [SerializeField] private float maxHeight = 320f;
+    [SerializeField] private Vector2 bodyMargin = new Vector2(12f, 12f);
+
+    [SerializeField] private float borderThickness = 3f;
+    [SerializeField] private float bodyPadding = 8f;
+
     private bool isVisible;
     CanvasGroup group;
 
@@ -49,6 +61,9 @@ public class InventoryTooltip : MonoBehaviour
 
         group = GetComponent<CanvasGroup>();
         if (!group) group = gameObject.AddComponent<CanvasGroup>();
+
+        if (!border && root) border = root.Find("Border") as RectTransform;
+        if (!fill && root) fill = root.Find("Fill") as RectTransform;
 
         HideImmediate();
     }
@@ -69,8 +84,16 @@ public class InventoryTooltip : MonoBehaviour
             return;
         }
 
+        // Ważne: obiekt musi być aktywny PRZED liczeniem layoutu.
+        if (!gameObject.activeSelf)
+            gameObject.SetActive(true);
+
+        group.alpha = 0f;
+        group.interactable = false;
+        group.blocksRaycasts = false;
+
         FillContent(inst);
-        SetWidth();
+        RebuildTooltipSize();
         SetPosition(screenPos);
         Show();
     }
@@ -95,20 +118,29 @@ public class InventoryTooltip : MonoBehaviour
 
     public void Hide()
     {
-        if (!gameObject.activeInHierarchy) return;
-
         isVisible = false;
-        group.alpha = 0f;
-        gameObject.SetActive(false);
+
+        if (group != null)
+        {
+            group.alpha = 0f;
+            group.interactable = false;
+            group.blocksRaycasts = false;
+        }
     }
 
     public void HideImmediate()
     {
-        if (!group) return;
-
         isVisible = false;
-        group.alpha = 0f;
-        gameObject.SetActive(false);
+
+        if (group != null)
+        {
+            group.alpha = 0f;
+            group.interactable = false;
+            group.blocksRaycasts = false;
+        }
+
+        if (!gameObject.activeSelf)
+            gameObject.SetActive(true);
     }
 
     // ---------------- LAYOUT ----------------
@@ -162,10 +194,27 @@ public class InventoryTooltip : MonoBehaviour
 
         if (data is WeaponItemData w)
         {
-            if (ammoRow && ammoValueText)
+            bool isMeleeWeapon = w.category == WeaponCategory.Melees;
+
+            if (!isMeleeWeapon)
             {
-                ammoRow.SetActive(true);
-                ammoValueText.text = $"{inst.currentAmmo}/{inst.totalAmmo}";
+                if (ammoRow && ammoValueText)
+                {
+                    ammoRow.SetActive(true);
+                    ammoValueText.text = $"{inst.currentAmmo}/{inst.totalAmmo}";
+                }
+
+                if (fireRateRow && fireRateValueText)
+                {
+                    fireRateRow.SetActive(true);
+                    fireRateValueText.text = w.fireRate.ToString("0.00");
+                }
+
+                if (ammoTypeRow && ammoTypeValueText)
+                {
+                    ammoTypeRow.SetActive(true);
+                    ammoTypeValueText.text = w.bulletType;
+                }
             }
 
             if (damageRow && damageValueText)
@@ -174,20 +223,9 @@ public class InventoryTooltip : MonoBehaviour
                 damageValueText.text = w.damage.ToString("0");
             }
 
-            if (fireRateRow && fireRateValueText)
-            {
-                fireRateRow.SetActive(true);
-                fireRateValueText.text = w.fireRate.ToString("0.00");
-            }
-
-            if (ammoTypeRow && ammoTypeValueText)
-            {
-                ammoTypeRow.SetActive(true);
-                ammoTypeValueText.text = w.bulletType;
-            }
-
             SetDescription(data.description);
         }
+
         else if (data is MeleeItemData melee)
         {
             if (damageRow && damageValueText)
@@ -244,9 +282,6 @@ public class InventoryTooltip : MonoBehaviour
         {
             SetDescription(data.description);
         }
-
-        if (body)
-            LayoutRebuilder.ForceRebuildLayoutImmediate(body);
     }
 
     void SetDescription(string desc)
@@ -256,5 +291,105 @@ public class InventoryTooltip : MonoBehaviour
         bool has = !string.IsNullOrWhiteSpace(desc);
         descriptionRow.SetActive(has);
         if (has) descriptionValueText.text = desc;
+    }
+
+    private void RebuildTooltipSize()
+    {
+        if (root == null || body == null)
+            return;
+
+        float finalWidth = Mathf.Clamp(tooltipWidth, minWidth, maxWidth);
+
+        root.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, finalWidth);
+
+        ApplyPanelRects();
+
+        Canvas.ForceUpdateCanvases();
+        LayoutRebuilder.ForceRebuildLayoutImmediate(body);
+
+        float rowsHeight = 0f;
+        int activeRows = 0;
+
+        for (int i = 0; i < body.childCount; i++)
+        {
+            RectTransform child = body.GetChild(i) as RectTransform;
+            if (child == null || !child.gameObject.activeSelf)
+                continue;
+
+            float h = LayoutUtility.GetPreferredHeight(child);
+
+            if (h <= 0.01f)
+                h = child.rect.height;
+
+            if (h <= 0.01f)
+                h = 22f;
+
+            rowsHeight += h;
+            activeRows++;
+        }
+
+        VerticalLayoutGroup vertical = body.GetComponent<VerticalLayoutGroup>();
+
+        float paddingTop = 0f;
+        float paddingBottom = 0f;
+        float spacing = 0f;
+
+        if (vertical != null)
+        {
+            paddingTop = vertical.padding.top;
+            paddingBottom = vertical.padding.bottom;
+            spacing = vertical.spacing;
+        }
+
+        float contentHeight =
+            rowsHeight +
+            paddingTop +
+            paddingBottom +
+            Mathf.Max(0, activeRows - 1) * spacing;
+
+        float finalHeight = Mathf.Clamp(
+            contentHeight + bodyPadding * 2f,
+            minHeight,
+            maxHeight
+        );
+
+        root.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, finalWidth);
+        root.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, finalHeight);
+
+        ApplyPanelRects();
+
+        Canvas.ForceUpdateCanvases();
+        LayoutRebuilder.ForceRebuildLayoutImmediate(body);
+    }
+
+
+    private void ApplyPanelRects()
+    {
+        if (border != null)
+        {
+            border.anchorMin = Vector2.zero;
+            border.anchorMax = Vector2.one;
+            border.pivot = new Vector2(0.5f, 0.5f);
+            border.offsetMin = Vector2.zero;
+            border.offsetMax = Vector2.zero;
+        }
+
+        if (fill != null)
+        {
+            fill.anchorMin = Vector2.zero;
+            fill.anchorMax = Vector2.one;
+            fill.pivot = new Vector2(0.5f, 0.5f);
+            fill.offsetMin = new Vector2(borderThickness, borderThickness);
+            fill.offsetMax = new Vector2(-borderThickness, -borderThickness);
+        }
+
+        if (body != null)
+        {
+            body.anchorMin = Vector2.zero;
+            body.anchorMax = Vector2.one;
+            body.pivot = new Vector2(0f, 1f);
+            body.offsetMin = new Vector2(bodyPadding, bodyPadding);
+            body.offsetMax = new Vector2(-bodyPadding, -bodyPadding);
+        }
     }
 }

@@ -429,6 +429,11 @@ public class GunUI : MonoBehaviour
         {
             if (inst?.data == null) continue;
 
+            if (inst.data is not WeaponItemData &&
+                inst.data is not MeleeItemData &&
+                inst.data is not GrenadeItemData)
+                continue;
+
             var slot = inst.data.GetWeaponSlot();
 
             if (slot != WeaponSlot.Nades)

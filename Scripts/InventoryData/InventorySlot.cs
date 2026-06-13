@@ -13,6 +13,10 @@ public class InventorySlot : MonoBehaviour,
     public Image iconImage;
     public GameObject fillImage;
     public GameObject borderImage;
+    public Image placementPreviewImage;
+    public Image occupiedHighlightImage;
+
+    [SerializeField] private Color defaultOccupiedColor = new Color(0.25f, 0.65f, 1f, 0.22f);
     public TextMeshProUGUI countText; // stackable items
 
     public int slotIndex; // ustawiane przez InventoryUI
@@ -24,10 +28,53 @@ public class InventorySlot : MonoBehaviour,
     {
         if (countText == null)
             countText = GetComponentInChildren<TextMeshProUGUI>(true);
+
+        if (placementPreviewImage == null)
+        {
+            Transform t = transform.Find("PlacementPreview");
+            if (t != null)
+                placementPreviewImage = t.GetComponent<Image>();
+        }
+
+        if (occupiedHighlightImage == null)
+        {
+            Transform t = transform.Find("OccupiedHighlight");
+            if (t != null)
+                occupiedHighlightImage = t.GetComponent<Image>();
+        }
+
+        ClearOccupiedHighlight();
+
+        ClearPlacementPreview();
+    }
+
+    public void SetPlacementPreview(bool visible, Color color)
+    {
+        if (placementPreviewImage == null)
+            return;
+
+        placementPreviewImage.gameObject.SetActive(visible);
+
+        if (visible)
+            placementPreviewImage.color = color;
+    }
+
+    public void ClearPlacementPreview()
+    {
+        if (placementPreviewImage == null)
+            return;
+
+        placementPreviewImage.gameObject.SetActive(false);
     }
 
     public void OnPointerEnter(PointerEventData e)
     {
+        if (InventoryUI.IsDraggingInventoryItem || InventoryUI.draggedItem != null)
+        {
+            InventoryTooltip.Instance?.Hide();
+            return;
+        }
+
         if (item == null || item.data == null) return;
 
         var tip = InventoryTooltip.Instance;
@@ -85,16 +132,27 @@ public class InventorySlot : MonoBehaviour,
 
         }
 
-        // Skala X dla slotów 2x/3x
-        int size = item.data.slotSize;
-        float scaleX = size > 1 ? size + 0.1f : 1f;
-        transform.localScale = new Vector3(scaleX, 1f, 1f);
+        // Skala dla itemów 1x1 / 1x2 / 1x3 oraz po rotacji 2x1 / 3x1
+        int width = item.WidthSlots;
+        int height = item.HeightSlots;
+
+        float scaleX = width > 1 ? width + 0.1f : 1f;
+        float scaleY = height > 1 ? height + 0.1f : 1f;
+
+        transform.localScale = new Vector3(scaleX, scaleY, 1f);
 
         var rt = GetComponent<RectTransform>();
         if (rt != null)
-            rt.pivot = new Vector2(0f, rt.pivot.y);
+        {
+            // pivot top-left, żeby item rozszerzał się w prawo i w dół
+            if (width > 1 || height > 1)
+                rt.pivot = new Vector2(0f, 1f);
+            else
+                rt.pivot = new Vector2(0.5f, 0.5f);
+        }
 
         UpdateCountDisplay();
+        SetOccupiedHighlight(true);
     }
 
     public void Clear()
@@ -113,9 +171,14 @@ public class InventorySlot : MonoBehaviour,
 
         var rt = GetComponent<RectTransform>();
         if (rt != null)
-            rt.pivot = new Vector2(0.5f, rt.pivot.y);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+
+        if (fillImage != null) fillImage.SetActive(true);
+        if (borderImage != null) borderImage.SetActive(true);
 
         UpdateCountDisplay();
+        ClearPlacementPreview();
+        ClearOccupiedHighlight();
     }
 
     public void UpdateCountDisplay()
@@ -151,5 +214,71 @@ public class InventorySlot : MonoBehaviour,
             countText.text = (shown > 1) ? $"x{shown}" : "";
             countText.gameObject.SetActive(shown > 1);
         }
+    }
+
+    public void SetOccupiedHighlight(bool visible)
+    {
+        SetOccupiedHighlight(visible, defaultOccupiedColor);
+    }
+
+    public void SetOccupiedHighlight(bool visible, Color color)
+    {
+        if (occupiedHighlightImage == null)
+            return;
+
+        occupiedHighlightImage.gameObject.SetActive(visible);
+
+        if (visible)
+            occupiedHighlightImage.color = color;
+    }
+
+    public void ClearOccupiedHighlight()
+    {
+        if (occupiedHighlightImage == null)
+            return;
+
+        occupiedHighlightImage.gameObject.SetActive(false);
+    }
+
+    public void SetDraggingVisual(bool dragging)
+    {
+        if (dragging)
+        {
+            if (iconImage != null)
+                iconImage.enabled = false;
+
+            if (countText != null)
+                countText.gameObject.SetActive(false);
+
+            transform.localScale = Vector3.one;
+
+            RectTransform rt = GetComponent<RectTransform>();
+            if (rt != null)
+                rt.pivot = new Vector2(0.5f, 0.5f);
+
+            if (fillImage != null)
+                fillImage.SetActive(true);
+
+            if (borderImage != null)
+                borderImage.SetActive(true);
+
+            ClearOccupiedHighlight();
+            ClearPlacementPreview();
+
+            return;
+        }
+
+        if (iconImage != null && item != null && item.data != null)
+        {
+            iconImage.sprite = item.data.icon;
+            iconImage.enabled = iconImage.sprite != null;
+            iconImage.color = Color.white;
+
+            if (item.hasBankCardMeta && BankSystem.Instance != null)
+                iconImage.color = BankSystem.Instance.GetVariantColor(item.bankCard.colorVariant);
+        }
+
+        UpdateCountDisplay();
+        ClearPlacementPreview();
     }
 }
