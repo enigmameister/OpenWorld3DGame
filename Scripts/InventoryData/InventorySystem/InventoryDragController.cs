@@ -142,12 +142,16 @@ public class InventoryDragController
         if (!RotatePressedThisFrame())
             return;
 
+        // Obracamy tylko ghost + dane itemu.
+        // Source grid zostaje logicznie tak jak by³ do momentu dropu.
         item.ToggleRotation();
 
         RebuildGhostShapeAfterRotation(item);
 
         clearInventoryPreview?.Invoke();
         clearBoxPreview?.Invoke();
+
+        refreshOccupiedHighlights?.Invoke();
     }
 
     private bool RotatePressedThisFrame()
