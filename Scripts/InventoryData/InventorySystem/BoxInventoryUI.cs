@@ -63,7 +63,6 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
 
     private PointerEventData cachedPointerData;
     private readonly List<RaycastResult> uiRaycastResults = new();
-    private readonly Dictionary<string, int> itemSlotMemory = new();
 
     public bool IsOpen { get; private set; }
 
@@ -280,20 +279,12 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
             var items = currentBox.GetItems();
 
             foreach (var inst in items)
-            {
-                if (inst == null || inst.data == null)
-                    continue;
-
-                if (TryPlaceItemAtRememberedSlot(inst))
-                    continue;
-
                 TryPlaceExistingInstance(inst);
-            }
         }
 
         RefreshOccupiedHighlights();
     }
-
+ 
     public void OnSlotClicked(InventorySlot clickedSlot)
     {
         if (currentBox == null || clickedSlot == null)
@@ -314,17 +305,8 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
         // 1) anulowanie drag, jeœli klikamy Ÿród³o
         if (InventoryUI.draggedItem != null && InventoryUI.DragSourceSlot == clickedSlot)
         {
-            bool rotationChanged =
-                InventoryUI.draggedItem.rotated != InventoryUI.DragOriginalRotated;
-
-            if (!rotationChanged)
-            {
-                InventoryUI.RestoreDraggedRotationIfCanceled();
-                ClearDragWithoutRefreshingSlots();
-                return;
-            }
-
-            // Po obrocie nie anulujemy — idziemy dalej do normalnego dropu.
+            ClearDrag();
+            return;
         }
 
         // 2) jeœli coœ przeci¹gamy
@@ -341,21 +323,10 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
 
                 if (!clickedOwnDraggedItem)
                 {
-                    bool wantsQuickSplit =
-                        InventoryUI.IsStackQuickSplitModifierHeld() &&
-                        InventoryUI.CanSplitStack(dragged);
-
-                    if (wantsQuickSplit)
-                    {
-                        if (TryQuickSplitDraggedStackIntoBoxSlot(clickedSlot))
-                            return;
-
-                        return;
-                    }
-
                     if (TryMergeDraggedStackIntoBoxSlot(clickedSlot))
                         return;
 
+                    // Zajêty slot innym itemem — nie koñcz draga.
                     return;
                 }
 
@@ -405,7 +376,7 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
                 if (maxAmount <= 0)
                     return;
 
-                ClearDragWithoutRefreshingSlots();
+                ClearDrag();
 
                 dialog.Open(
                     $"TRANSFER {sourceItem.data.itemName}",
@@ -429,15 +400,13 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
                                 currentBox.GetItems().Add(part);
 
                             PlaceAt(targetIndex, part);
+                            RefreshCountDisplay(sourceItem);
+                            RefreshCountDisplay(part);
+                            RefreshCapacityTexts();
+                            RefreshOccupiedHighlights();
 
-                            // odœwie¿ Ÿród³o
-                            if (splitSource is InventoryUI invSource)
-                                invSource.RefreshVisualsAfterExternalStackChange(sourceItem);
-                            else if (splitSource is BoxInventoryUI boxSource)
-                                boxSource.RefreshVisualsAfterExternalStackChange(sourceItem);
-
-                            // odœwie¿ target Box
-                            RefreshVisualsAfterExternalStackChange(part);
+                            if (InventoryUI.Instance != null)
+                                InventoryUI.Instance.RefreshGunUIFromWeaponManager();
                         }
                     },
                     cancel: null
@@ -491,96 +460,21 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
         // 3) START DRAG Z BOXA
         if (InventoryUI.draggedItem == null && clickedSlot.isOccupied && clickedSlot.item != null)
         {
-            InventoryItemInstance item = clickedSlot.item;
-
-            InventorySlot sourceSlot = GetTopLeftSlotForItem(item);
-            if (sourceSlot == null)
-                sourceSlot = clickedSlot;
-
-            InventoryUI.draggedItem = item;
-            InventoryUI.CaptureDragOriginalRotation(InventoryUI.draggedItem);
-
+            InventoryUI.draggedItem = clickedSlot.item;
             InventoryUI.DragSourceOwner = this;
-            InventoryUI.DragSourceSlot = sourceSlot;
+            InventoryUI.DragSourceSlot = clickedSlot;
             InventoryUI.SetInventoryItemDragging(true);
 
-            InventoryUI.Instance?.ShowDragGhost(InventoryUI.draggedItem, sourceSlot);
+            InventoryUI.Instance?.ShowDragGhost(InventoryUI.draggedItem, clickedSlot);
 
+            // ShowDragGhost ukrywa item po stronie InventoryUI,
+            // ale Ÿród³o jest w Boxie, wiêc chowamy te¿ wizualnie sloty Boxa.
             SetDraggingVisualForItem(InventoryUI.draggedItem, true);
 
             InventoryTooltip.Instance?.Hide();
 
             return;
         }
-    }
-
-    private bool TryQuickSplitDraggedStackIntoBoxSlot(InventorySlot targetSlot)
-    {
-        InventoryItemInstance sourceItem = InventoryUI.draggedItem;
-
-        if (sourceItem == null || sourceItem.data == null)
-            return false;
-
-        if (targetSlot == null || targetSlot.item == null || targetSlot.item.data == null)
-            return false;
-
-        InventoryItemInstance targetItem = targetSlot.item;
-        IInventorySlotOwner sourceOwner = InventoryUI.DragSourceOwner;
-
-        if (sourceOwner == null)
-            return false;
-
-        if (!InventoryStackService.CanMergeStacks(sourceItem, targetItem))
-            return false;
-
-        bool sameOwner = ReferenceEquals(sourceOwner, this);
-
-        int amount = InventoryStackService.GetQuickSplitHalfAmount(sourceItem, sameOwner);
-        if (amount <= 0)
-            return false;
-
-        if (sourceOwner is BoxInventoryUI boxSourceBefore)
-            boxSourceBefore.SetDraggingVisualForItem(sourceItem, false);
-
-        InventoryUI.Instance?.HideDragGhost();
-        ClearPlacementPreview();
-
-        bool removed = sourceOwner.RemoveStackAmountFromOwner(sourceItem, amount);
-        if (!removed)
-            return false;
-
-        targetItem.count += amount;
-        RefreshCountDisplay(targetItem);
-
-        InventoryUI.ClearSharedDragState();
-
-        if (sourceOwner is InventoryUI invSource)
-            invSource.RefreshVisualsAfterExternalStackChange(sourceItem);
-        else if (sourceOwner is BoxInventoryUI boxSource)
-            boxSource.RefreshVisualsAfterExternalStackChange(sourceItem);
-
-        RefreshVisualsAfterExternalStackChange(targetItem);
-        RefreshCapacityTexts();
-
-        if (InventoryUI.Instance != null)
-            InventoryUI.Instance.RefreshGunUIFromWeaponManager();
-
-        return true;
-    }
-
-    private void ClearDragWithoutRefreshingSlots()
-    {
-        if (InventoryUI.draggedItem != null && ReferenceEquals(InventoryUI.DragSourceOwner, this))
-            SetDraggingVisualForItem(InventoryUI.draggedItem, false);
-
-        ClearPlacementPreview();
-
-        InventoryUI.ClearSharedDragState();
-
-        if (InventoryUI.Instance != null)
-            InventoryUI.Instance.HideDragGhost();
-
-        RefreshOccupiedHighlights();
     }
 
     public bool TryReceiveItem(InventoryItemInstance item)
@@ -601,19 +495,30 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
 
     public bool RemoveItemFromOwner(InventoryItemInstance item)
     {
-        if (currentBox == null || item == null)
-            return false;
+        if (currentBox == null || item == null) return false;
 
         bool removed = currentBox.GetItems().Remove(item);
-
-        ForgetItemSlot(item);
-
         RemoveVisualOnly(item);
-
+        RefreshSlots();
         RefreshCapacityTexts();
-        RefreshOccupiedHighlights();
 
         return removed;
+    }
+
+    private void ClearDrag()
+    {
+        if (InventoryUI.draggedItem != null && ReferenceEquals(InventoryUI.DragSourceOwner, this))
+            SetDraggingVisualForItem(InventoryUI.draggedItem, false);
+
+        RefreshSlots();
+        RefreshOccupiedHighlights();
+
+        ClearPlacementPreview();
+
+        InventoryUI.ClearSharedDragState();
+
+        if (InventoryUI.Instance != null)
+            InventoryUI.Instance.HideDragGhost();
     }
 
     private void RefreshCapacityTexts()
@@ -732,56 +637,20 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
 
     private bool TryMergeDraggedStackIntoBoxSlot(InventorySlot targetSlot)
     {
-        InventoryItemInstance sourceItem = InventoryUI.draggedItem;
+        return InventoryStackService.TryMergeDraggedStackIntoSlot(
+            InventoryUI.draggedItem,
+            targetSlot,
+            InventoryUI.DragSourceOwner,
+            RefreshCountDisplay,
+            () =>
+            {
+                ClearDrag();
+                RefreshCapacityTexts();
 
-        if (sourceItem == null || sourceItem.data == null)
-            return false;
-
-        if (targetSlot == null || targetSlot.item == null || targetSlot.item.data == null)
-            return false;
-
-        InventoryItemInstance targetItem = targetSlot.item;
-        IInventorySlotOwner sourceOwner = InventoryUI.DragSourceOwner;
-
-        if (sourceOwner == null)
-            return false;
-
-        if (!InventoryStackService.CanMergeStacks(sourceItem, targetItem))
-            return false;
-
-        int addAmount = Mathf.Max(1, sourceItem.count);
-
-        // Przywróæ wizual Ÿród³a przed zdjêciem draga.
-        if (sourceOwner is InventoryUI invSourceBefore)
-            invSourceBefore.RefreshVisualsAfterExternalStackChange(sourceItem);
-        else if (sourceOwner is BoxInventoryUI boxSourceBefore)
-            boxSourceBefore.RefreshVisualsAfterExternalStackChange(sourceItem);
-
-        InventoryUI.Instance?.HideDragGhost();
-        ClearPlacementPreview();
-
-        bool removed = sourceOwner.RemoveItemFromOwner(sourceItem);
-        if (!removed)
-            return false;
-
-        targetItem.count += addAmount;
-
-        RefreshCountDisplay(targetItem);
-
-        InventoryUI.ClearSharedDragState();
-
-        if (sourceOwner is InventoryUI invSource)
-            invSource.RefreshVisualsAfterExternalStackChange(sourceItem);
-        else if (sourceOwner is BoxInventoryUI boxSource)
-            boxSource.RefreshVisualsAfterExternalStackChange(sourceItem);
-
-        RefreshVisualsAfterExternalStackChange(targetItem);
-        RefreshCapacityTexts();
-
-        if (InventoryUI.Instance != null)
-            InventoryUI.Instance.RefreshGunUIFromWeaponManager();
-
-        return true;
+                if (InventoryUI.Instance != null)
+                    InventoryUI.Instance.RefreshGunUIFromWeaponManager();
+            }
+        );
     }
 
     private void RefreshCountDisplay(InventoryItemInstance item)
@@ -793,23 +662,6 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
             if (slot != null && slot.item == item)
                 slot.UpdateCountDisplay();
         }
-    }
-
-    public void RefreshVisualsAfterExternalStackChange(InventoryItemInstance item = null)
-    {
-        if (item != null)
-        {
-            SetDraggingVisualForItem(item, false);
-            RefreshCountDisplay(item);
-        }
-
-        ClearPlacementPreview();
-
-        RefreshCapacityTexts();
-        RefreshOccupiedHighlights();
-
-        if (InventoryUI.Instance != null)
-            InventoryUI.Instance.RefreshGunUIFromWeaponManager();
     }
 
     private void UpdatePlacementPreview()
@@ -876,6 +728,20 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
 
         return null;
     }
+   
+    private void SetDraggingVisualForItem(InventoryItemInstance item, bool dragging)
+    {
+        if (item == null)
+            return;
+
+        for (int i = 0; i < slotList.Count; i++)
+        {
+            InventorySlot slot = slotList[i];
+
+            if (slot != null && slot.item == item)
+                slot.SetDraggingVisual(dragging);
+        }
+    }
 
     public void ClearPlacementPreviewExternal()
     {
@@ -923,7 +789,7 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
             return false;
         }
 
-        ClearDragWithoutRefreshingSlots();
+        ClearDrag();
 
         if (!splitSource.RemoveStackAmountFromOwner(sourceItem, amount))
             return false;
@@ -933,116 +799,17 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
 
         PlaceAt(targetIndex, part);
 
-        if (splitSource is InventoryUI invSource)
-            invSource.RefreshVisualsAfterExternalStackChange(sourceItem);
-        else if (splitSource is BoxInventoryUI boxSource)
-            boxSource.RefreshVisualsAfterExternalStackChange(sourceItem);
-
-        RefreshVisualsAfterExternalStackChange(part);
-
-        return true;
-    }
-
-    private string GetItemMemoryKey(InventoryItemInstance item)
-    {
-        return item != null ? item.id : "";
-    }
-
-    private void RememberItemSlot(InventoryItemInstance item, int startIndex)
-    {
-        if (item == null || string.IsNullOrEmpty(item.id))
-            return;
-
-        itemSlotMemory[item.id] = startIndex;
-    }
-
-    private void ForgetItemSlot(InventoryItemInstance item)
-    {
-        if (item == null || string.IsNullOrEmpty(item.id))
-            return;
-
-        itemSlotMemory.Remove(item.id);
-    }
-
-    private int GetStartIndexOfItem(InventoryItemInstance item)
-    {
-        if (item == null)
-            return -1;
-
-        for (int i = 0; i < slotList.Count; i++)
-        {
-            InventorySlot slot = slotList[i];
-
-            if (slot != null && slot.item == item)
-                return i;
-        }
-
-        return -1;
-    }
-
-    private bool TryPlaceItemAtRememberedSlot(InventoryItemInstance item)
-    {
-        if (item == null || item.data == null || grid == null)
-            return false;
-
-        string key = GetItemMemoryKey(item);
-
-        if (string.IsNullOrEmpty(key))
-            return false;
-
-        if (!itemSlotMemory.TryGetValue(key, out int rememberedIndex))
-            return false;
-
-        int width = grid.GetItemWidth(item);
-        int height = grid.GetItemHeight(item);
-
-        if (!grid.CanFitShape(rememberedIndex, width, height))
-            return false;
-
-        grid.PlaceAtUnsafe(rememberedIndex, item);
-        RememberItemSlot(item, rememberedIndex);
-
-        return true;
-    }
-
-    public bool TryRelayoutDraggedItemAfterRotation(InventoryItemInstance item)
-    {
-        if (item == null || item.data == null || grid == null)
-            return false;
-
-        int startIndex = grid.GetTopLeftIndexForItem(item);
-
-        if (startIndex < 0 && itemSlotMemory.TryGetValue(item.id, out int remembered))
-            startIndex = remembered;
-
-        if (startIndex < 0)
-            return false;
-
-        grid.ForceRemoveCompletely(item);
-
-        int width = grid.GetItemWidth(item);
-        int height = grid.GetItemHeight(item);
-
-        if (!grid.CanFitShape(startIndex, width, height))
-        {
-            item.ToggleRotation();
-
-            width = grid.GetItemWidth(item);
-            height = grid.GetItemHeight(item);
-
-            if (!grid.CanFitShape(startIndex, width, height))
-                return false;
-        }
-
-        PlaceAt(startIndex, item);
-
-        SetDraggingVisualForItem(item, true);
-
+        RefreshCountDisplay(sourceItem);
+        RefreshCountDisplay(part);
         RefreshCapacityTexts();
         RefreshOccupiedHighlights();
 
+        if (InventoryUI.Instance != null)
+            InventoryUI.Instance.RefreshGunUIFromWeaponManager();
+
         return true;
     }
+
 
     // =====================================================
     // Grid Controller Wrappers
@@ -1061,28 +828,12 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
 
     private void PlaceAt(int startIndex, InventoryItemInstance inst)
     {
-        if (grid == null || inst == null)
-            return;
-
-        grid.PlaceAtUnsafe(startIndex, inst);
-        RememberItemSlot(inst, startIndex);
+        grid?.PlaceAtUnsafe(startIndex, inst);
     }
 
     private bool TryPlaceExistingInstance(InventoryItemInstance inst)
     {
-        if (grid == null || inst == null)
-            return false;
-
-        bool placed = grid.TryPlaceExistingInstance(inst);
-
-        if (placed)
-        {
-            int index = GetStartIndexOfItem(inst);
-            if (index >= 0)
-                RememberItemSlot(inst, index);
-        }
-
-        return placed;
+        return grid != null && grid.TryPlaceExistingInstance(inst);
     }
 
     private void ClearSlotVisual(InventorySlot slot)
@@ -1111,16 +862,6 @@ public class BoxInventoryUI : MonoBehaviour, IInventorySlotOwner
     private int CountUsedSlots()
     {
         return grid != null ? grid.CountUsedSlots() : 0;
-    }
-
-    private void SetDraggingVisualForItem(InventoryItemInstance item, bool dragging)
-    {
-        grid?.SetDraggingVisualForItem(item, dragging);
-    }
-
-    private InventorySlot GetTopLeftSlotForItem(InventoryItemInstance item)
-    {
-        return grid != null ? grid.GetTopLeftSlotForItem(item) : null;
     }
 
     // =====================================================
