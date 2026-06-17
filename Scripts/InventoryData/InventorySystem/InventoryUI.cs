@@ -7,11 +7,14 @@ using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 #if ENABLE_INPUT_SYSTEM
+
 using UnityEngine.InputSystem;
+
 #endif
 
 public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 {
+
     private InventoryGridController grid;
     private InventoryDragController dragController;
     private InventoryDropService dropService;
@@ -24,7 +27,10 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     public static InventoryItemInstance draggedItem;
 
     public static IInventorySlotOwner DragSourceOwner;
+
     public static InventorySlot DragSourceSlot;
+
+    public static bool DragOriginalRotated { get; private set; }
 
     [Header("Refs")]
     [SerializeField] private WeaponManager weaponManager;
@@ -86,7 +92,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     private float fadeSpeed = 10f;
     private readonly float[] currentAlphas = new float[2];
 
-
     private Vector2 dragOffset;
     public static int DraggedGrabCellOffset { get; private set; }
     public static int DraggedGrabCellOffsetY { get; private set; }
@@ -124,9 +129,10 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         // ✅ ESC ma priorytet (działa nawet jeśli ATM jest open)
         bool escPressed =
 #if ENABLE_INPUT_SYSTEM
-            (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame);
+
+        (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame);
 #else
-        Input.GetKeyDown(KeyCode.Escape);
+        Input.GetKeyDown(KeyCode.Escape);   
 #endif
 
         if (CarRaceManager.IsRaceLoading)
@@ -474,7 +480,7 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
     public void ToggleInventory()
     {
-       // Debug.Log($"[INV] ToggleInventory called. IsInventoryOpen(before)={IsInventoryOpen} panelActive={inventoryPanel.activeSelf} alpha={(panelGroup ? panelGroup.alpha : -1f)}");
+        // Debug.Log($"[INV] ToggleInventory called. IsInventoryOpen(before)={IsInventoryOpen} panelActive={inventoryPanel.activeSelf} alpha={(panelGroup ? panelGroup.alpha : -1f)}");
 
         if (DevConsole.IsOpen && !IsInventoryOpen) return;
 
@@ -566,6 +572,9 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
     private void ResetDragState()
     {
+        if (draggedItem != null)
+            RestoreDraggedRotationIfCanceled();
+
         InventoryItemInstance itemToRestore = draggedItem;
 
         if (itemToRestore != null)
@@ -1017,9 +1026,30 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             if (slot.item == instance) slot.UpdateCountDisplay();
     }
 
+    public void RefreshVisualsAfterExternalStackChange(InventoryItemInstance item = null)
+    {
+        if (item != null)
+            SetDraggingVisualForItem(item, false);
+
+        HideDragGhost();
+
+        dragController?.ResetPointerOffset();
+        SetDraggedGrabCellOffset(0, 0);
+
+        ClearPlacementPreview();
+
+        RebuildSlotVisualsFromCurrentState();
+        RebuildSlotsLayout();
+
+        if (item != null)
+            RefreshCountDisplay(item);
+
+        RefreshOccupiedHighlights();
+        RefreshGunUIFromWeaponManager();
+    }
+
     public void OnSlotClicked(InventorySlot clickedSlot)
     {
-
         int clickedIndex = slotList.IndexOf(clickedSlot);
         if (clickedIndex < 0) return;
 
@@ -1031,11 +1061,40 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             placeIndex -= DraggedGrabCellOffsetY * slotsPerRow;
         }
 
-        // 1) klik na źródłowy slot -> anuluj drag i odbuduj item 1x2/1x3
+        // 1) Klik na źródłowy slot:
+        // - jeśli NIE było obrotu -> anuluj drag,
+        // - jeśli BYŁ obrót -> pozwól normalnie odłożyć item w nowym obrocie.
         if (draggedItem != null && draggedSlot == clickedSlot)
         {
-            FinishInventoryDrag();
-            return;
+            bool rotationChanged = draggedItem.rotated != DragOriginalRotated;
+
+            if (!rotationChanged)
+            {
+                RestoreDraggedRotationIfCanceled();
+                FinishInventoryDrag();
+                return;
+            }
+
+            // rotationChanged == true:
+            // nie robimy return, przechodzimy dalej do normalnego dropu
+        }
+
+        // 1B) klik na inną komórkę tego samego itemu 1x2/1x3 -> też anuluj drag
+        if (draggedItem != null &&
+            ReferenceEquals(DragSourceOwner, this) &&
+            clickedSlot.item == draggedItem &&
+            clickedSlot != draggedSlot)
+        {
+            bool rotationChanged = draggedItem.rotated != DragOriginalRotated;
+
+            if (!rotationChanged)
+            {
+                RestoreDraggedRotationIfCanceled();
+                FinishInventoryDrag();
+                return;
+            }
+
+            // Po obrocie pozwól normalnie dropnąć na stary obszar itemu.
         }
 
         // 2) DROP NA ZAJĘTY SLOT (np. ammo -> broń)
@@ -1049,6 +1108,18 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
             if (!clickedOwnDraggedItem)
             {
+                bool wantsQuickSplit =
+                    InventoryStackService.IsStackQuickSplitModifierHeld() &&
+                    InventoryStackService.CanSplitStack(draggedItem);
+
+                if (wantsQuickSplit)
+                {
+                    if (TryQuickSplitDraggedStackIntoInventorySlot(clickedSlot))
+                        return;
+
+                    return;
+                }
+
                 if (TryMergeDraggedStackIntoInventorySlot(clickedSlot))
                     return;
 
@@ -1076,7 +1147,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
                     }
                 }
 
-                // Zajęty slot innym itemem — nie kasuj draga, tylko zostaw go w ręce.
                 return;
             }
 
@@ -1089,19 +1159,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         {
             if (clickedIndex < 0) return;
             if (slotList[clickedIndex].CompareTag("LockedSlot")) return;
-
-            if (InventoryUI.DragSourceOwner is BoxInventoryUI && IsCombatItemData(draggedItem.data))
-            {
-                if (!CanReceiveWeaponFromBox(draggedItem))
-                {
-                    HideDragGhost();
-                    ClearSharedDragState();
-                    draggedSlot = null;
-
-                    BoxInventoryUI.Instance?.ShowTransferMessagePublic("ALREADY WEAPON THIS TYPE");
-                    return;
-                }
-            }
 
             if (!CanPlaceDraggedItemAt(placeIndex, draggedItem))
                 return;
@@ -1131,71 +1188,26 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             // SHIFT + split stacka z oknem
             if (wantsDialogSplit)
             {
-                ItemAmountDialog dialog = ItemAmountDialog.Instance;
-                if (dialog == null) return;
-
-                int targetIndex = placeIndex;
-                InventoryItemInstance sourceItem = draggedItem;
-                IInventorySlotOwner splitSource = sourceOwner;
-
-                bool sameOwner = ReferenceEquals(splitSource, this);
-
-                int maxAmount = sameOwner
-                    ? Mathf.Max(1, sourceItem.count - 1)
-                    : sourceItem.count;
-
-                if (maxAmount <= 0)
-                    return;
-
-                if (sourceItem != null)
-                    SetDraggingVisualForItem(sourceItem, false);
-
-                HideDragGhost();
-
-                DraggedGrabCellOffset = 0;
-                DraggedGrabCellOffsetY = 0;
-
-                ClearPlacementPreview();
-
-                draggedSlot = null;
-                ClearSharedDragState();
-
-                RebuildSlotVisualsFromCurrentState();
-                RebuildSlotsLayout();
-                RefreshOccupiedHighlights();
-
-                dialog.Open(
-                    $"TRANSFER {sourceItem.data.itemName}",
-                    1,
-                    maxAmount,
-                    Mathf.CeilToInt(maxAmount / 2f),
-                    amount =>
-                    {
-                        amount = Mathf.Clamp(amount, 1, maxAmount);
-
-                        InventoryItemInstance part = InventoryStackService.CloneStackPart(sourceItem, amount);
-                        if (part == null)
-                            return;
-
-                        if (!CanFitShape(targetIndex, GetItemWidth(part), GetItemHeight(part), slotsPerRow))
-                            return;
-
-                        if (splitSource != null && splitSource.RemoveStackAmountFromOwner(sourceItem, amount))
-                        {
-                            TryAddItemAt(targetIndex, part);
-
-                            RebuildSlotVisualsFromCurrentState();
-                            RebuildSlotsLayout();
-                            RefreshCountDisplay(sourceItem);
-                            RefreshCountDisplay(part);
-                            RefreshOccupiedHighlights();
-                            RefreshGunUIFromWeaponManager();
-                        }
-                    },
-                    cancel: null
+                OpenSplitDraggedStackToInventoryDialog(
+                    placeIndex,
+                    draggedItem,
+                    sourceOwner
                 );
 
                 return;
+            }
+
+            if (InventoryUI.DragSourceOwner is BoxInventoryUI && IsCombatItemData(draggedItem.data))
+            {
+                if (!CanReceiveWeaponFromBox(draggedItem))
+                {
+                    HideDragGhost();
+                    ClearSharedDragState();
+                    draggedSlot = null;
+
+                    BoxInventoryUI.Instance?.ShowTransferMessagePublic("ALREADY WEAPON THIS TYPE");
+                    return;
+                }
             }
 
             // Normalne przeniesienie całego itemu/stacka
@@ -1220,13 +1232,28 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
                     if (removedFromSource && IsCombatItemData(movedItem.data))
                     {
-                        if (!RegisterWeaponFromBoxTransfer(movedItem))
+                        // Granaty są stackowalne — po ręcznym przeniesieniu do Inventory
+                        // wystarczy zsynchronizować slot granatu/HUD.
+                        if (movedItem.data is GrenadeItemData)
                         {
-                            ForceRemoveItemCompletely(movedItem);
+                            EnsureWeaponManager();
+                            weaponManager?.SyncGrenadeSlotFromInventory(movedItem.data);
                             RefreshGunUIFromWeaponManager();
+                        }
+                        else
+                        {
+                            if (!RegisterWeaponFromBoxTransfer(movedItem))
+                            {
+                                ForceRemoveItemCompletely(movedItem);
 
-                            FinishInventoryDrag();
-                            return;
+                                if (sourceOwner != null)
+                                    sourceOwner.TryReceiveItem(movedItem);
+
+                                RefreshGunUIFromWeaponManager();
+
+                                FinishInventoryDrag();
+                                return;
+                            }
                         }
                     }
                 }
@@ -1242,18 +1269,23 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
         if (draggedItem == null && clickedSlot.isOccupied && clickedSlot.item != null)
         {
-            draggedItem = clickedSlot.item;
-            draggedSlot = clickedSlot;
-            draggedOriginSlotIndex = clickedIndex;
+            InventoryItemInstance item = clickedSlot.item;
+
+            InventorySlot sourceSlot = GetTopLeftSlotForItem(item);
+            if (sourceSlot == null)
+                sourceSlot = clickedSlot;
+
+            draggedItem = item;
+            CaptureDragOriginalRotation(draggedItem);
+            draggedSlot = sourceSlot;
+            draggedOriginSlotIndex = sourceSlot.slotIndex;
 
             InventoryUI.DragSourceOwner = this;
-            InventoryUI.DragSourceSlot = clickedSlot;
+            InventoryUI.DragSourceSlot = sourceSlot;
 
-            // WAŻNE: najpierw stan drag, dopiero potem ShowDragGhost(),
-            // bo ShowDragGhost() odpala RefreshOccupiedHighlights().
             IsDraggingInventoryItem = true;
 
-            ShowDragGhost(draggedItem, clickedSlot);
+            ShowDragGhost(draggedItem, sourceSlot);
 
             RefreshOccupiedHighlights();
             return;
@@ -1261,6 +1293,99 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
         if (dragGhost != null)
             dragGhost.gameObject.SetActive(false);
+    }
+
+    private void OpenSplitDraggedStackToInventoryDialog(
+    int targetIndex,
+    InventoryItemInstance sourceItem,
+    IInventorySlotOwner splitSource)
+    {
+        if (sourceItem == null || sourceItem.data == null)
+            return;
+
+        ItemAmountDialog dialog = ItemAmountDialog.Instance;
+        if (dialog == null)
+            return;
+
+        bool sameOwner = ReferenceEquals(splitSource, this);
+
+        int maxAmount = InventoryStackService.GetMaxSplitAmount(sourceItem, sameOwner);
+
+        if (maxAmount <= 0)
+            return;
+
+        // Chowamy drag, ale przywracamy wizual po stronie PRAWDZIWEGO źródła:
+        // Inventory albo Box.
+        RefreshSourceOwnerAfterStackChange(splitSource, sourceItem);
+
+        HideDragGhost();
+
+        dragController?.ResetPointerOffset();
+        SetDraggedGrabCellOffset(0, 0);
+        ClearPlacementPreview();
+
+        draggedSlot = null;
+        ClearSharedDragState();
+
+        RefreshOccupiedHighlights();
+
+        dialog.Open(
+            $"TRANSFER {sourceItem.data.itemName}",
+            1,
+            maxAmount,
+            Mathf.CeilToInt(maxAmount / 2f),
+            amount =>
+            {
+                amount = Mathf.Clamp(amount, 1, maxAmount);
+
+                InventoryItemInstance part = InventoryStackService.CloneStackPart(sourceItem, amount);
+                if (part == null)
+                    return;
+
+                if (!CanFitShape(targetIndex, GetItemWidth(part), GetItemHeight(part), slotsPerRow))
+                    return;
+
+                if (splitSource == null)
+                    return;
+
+                bool removed = splitSource.RemoveStackAmountFromOwner(sourceItem, amount);
+                if (!removed)
+                    return;
+
+                bool added = TryAddItemAt(targetIndex, part);
+
+                if (!added)
+                {
+                    sourceItem.count += amount;
+
+                    RefreshSourceOwnerAfterStackChange(splitSource, sourceItem);
+                    RefreshOccupiedHighlights();
+                    RefreshGunUIFromWeaponManager();
+
+                    return;
+                }
+
+                // Jeśli źródłem był Box i to combat item, trzeba zsynchronizować WeaponManager/GunUI.
+                if (part.data is GrenadeItemData)
+                {
+                    EnsureWeaponManager();
+                    weaponManager?.SyncGrenadeSlotFromInventory(part.data);
+                    RefreshGunUIFromWeaponManager();
+                }
+                else if (splitSource is BoxInventoryUI && IsCombatItemData(part.data))
+                {
+                    RegisterWeaponFromBoxTransfer(part);
+                }
+
+                if (splitSource is InventoryUI invSource)
+                    invSource.RefreshVisualsAfterExternalStackChange(sourceItem);
+                else if (splitSource is BoxInventoryUI boxSource)
+                    boxSource.RefreshVisualsAfterExternalStackChange(sourceItem);
+
+                RefreshVisualsAfterExternalStackChange(part);
+            },
+            cancel: null
+        );
     }
 
     private static bool IsCompatible(AmmoItemData ammo, WeaponItemData weapon)
@@ -1398,7 +1523,16 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         return false;
     }
 
+    public static void CaptureDragOriginalRotation(InventoryItemInstance item)
+    {
+        DragOriginalRotated = item != null && item.rotated;
+    }
 
+    public static void RestoreDraggedRotationIfCanceled()
+    {
+        if (draggedItem != null)
+            draggedItem.rotated = DragOriginalRotated;
+    }
 
     public List<InventoryItemInstance> GetAllBankCards(bool onlyUsable = false)
     {
@@ -1447,7 +1581,7 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             return;
         }
 
-       // Debug.LogWarning($"[INV] GiveOrDrop: no drop handler for item '{inst.data?.name}'.");
+        // Debug.LogWarning($"[INV] GiveOrDrop: no drop handler for item '{inst.data?.name}'.");
     }
 
     public bool HasBankCardId(string cardId)
@@ -1540,6 +1674,7 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         IsDraggingInventoryItem = false;
         DraggedGrabCellOffset = 0;
         DraggedGrabCellOffsetY = 0;
+        DragOriginalRotated = false;
     }
 
     public static void SetDraggedGrabCellOffset(int x, int y)
@@ -1552,11 +1687,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     {
         return unlockedSlotCount;
     }
-
-
-   
-
-
 
     private void DropDraggedItemToWorldDirect(
       InventoryItemInstance sourceItem,
@@ -1905,20 +2035,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         return null;
     }
 
-    private void SetDraggingVisualForItem(InventoryItemInstance item, bool dragging)
-    {
-        if (item == null)
-            return;
-
-        for (int i = 0; i < slotList.Count; i++)
-        {
-            InventorySlot slot = slotList[i];
-
-            if (slot != null && slot.item == item)
-                slot.SetDraggingVisual(dragging);
-        }
-    }
-
     // =====================================================
     // Grid Controller Wrappers
     // =====================================================
@@ -1987,6 +2103,16 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             : new List<InventoryItemInstance>();
     }
 
+    private void SetDraggingVisualForItem(InventoryItemInstance item, bool dragging)
+    {
+        grid?.SetDraggingVisualForItem(item, dragging);
+    }
+
+    private InventorySlot GetTopLeftSlotForItem(InventoryItemInstance item)
+    {
+        return grid != null ? grid.GetTopLeftSlotForItem(item) : null;
+    }
+
     // =====================================================
     // Drag Controller Wrappers
     // =====================================================
@@ -2022,17 +2148,66 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
     private bool TryMergeDraggedStackIntoInventorySlot(InventorySlot targetSlot)
     {
-        return InventoryStackService.TryMergeDraggedStackIntoSlot(
-            draggedItem,
-            targetSlot,
-            DragSourceOwner,
-            RefreshCountDisplay,
-            () =>
-            {
-                FinishInventoryDrag();
-                RefreshGunUIFromWeaponManager();
-            }
-        );
+        if (draggedItem == null || draggedItem.data == null)
+            return false;
+
+        if (targetSlot == null || targetSlot.item == null || targetSlot.item.data == null)
+            return false;
+
+        InventoryItemInstance sourceItem = draggedItem;
+        InventoryItemInstance targetItem = targetSlot.item;
+        IInventorySlotOwner sourceOwner = DragSourceOwner;
+
+        if (sourceOwner == null)
+            return false;
+
+        if (!InventoryStackService.CanMergeStacks(sourceItem, targetItem))
+            return false;
+
+        int addAmount = Mathf.Max(1, sourceItem.count);
+
+        // Przywróć wizual źródła przed zdjęciem draga.
+        if (sourceOwner is InventoryUI invSourceBefore)
+            invSourceBefore.RefreshVisualsAfterExternalStackChange(sourceItem);
+        else if (sourceOwner is BoxInventoryUI boxSourceBefore)
+            boxSourceBefore.RefreshVisualsAfterExternalStackChange(sourceItem);
+
+        SetDraggingVisualForItem(sourceItem, false);
+        HideDragGhost();
+
+        dragController?.ResetPointerOffset();
+        SetDraggedGrabCellOffset(0, 0);
+        ClearPlacementPreview();
+
+        // Najpierw zdejmij ze źródła.
+        bool removed = sourceOwner.RemoveItemFromOwner(sourceItem);
+        if (!removed)
+            return false;
+
+        // Potem dodaj do target stacka.
+        targetItem.count += addAmount;
+
+        RefreshCountDisplay(targetItem);
+
+        if (targetItem.data is GrenadeItemData)
+        {
+            EnsureWeaponManager();
+            weaponManager?.SyncGrenadeSlotFromInventory(targetItem.data);
+        }
+
+        // Wyczyść drag dopiero po operacji.
+        draggedSlot = null;
+        ClearSharedDragState();
+
+        if (sourceOwner is InventoryUI invSource)
+            invSource.RefreshVisualsAfterExternalStackChange(sourceItem);
+        else if (sourceOwner is BoxInventoryUI boxSource)
+            boxSource.RefreshVisualsAfterExternalStackChange(sourceItem);
+
+        RefreshVisualsAfterExternalStackChange(targetItem);
+        RefreshGunUIFromWeaponManager();
+
+        return true;
     }
 
     public static bool IsStackQuickSplitModifierHeld()
@@ -2046,9 +2221,9 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     }
 
     private bool TryQuickSplitDraggedStackToInventorySlot(
-    int targetIndex,
-    InventoryItemInstance sourceItem,
-    IInventorySlotOwner splitSource)
+     int targetIndex,
+     InventoryItemInstance sourceItem,
+     IInventorySlotOwner splitSource)
     {
         if (sourceItem == null || sourceItem.data == null)
             return false;
@@ -2082,9 +2257,9 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             return false;
         }
 
-        // Przywróć wizual źródła zanim zerwiemy drag.
-        if (sourceItem != null)
-            SetDraggingVisualForItem(sourceItem, false);
+        // Ważne: przywróć wizual źródła po stronie prawdziwego ownera.
+        // Jeśli źródłem jest Box, samo SetDraggingVisualForItem() z InventoryUI nie wystarczy.
+        RefreshSourceOwnerAfterStackChange(splitSource, sourceItem);
 
         HideDragGhost();
 
@@ -2096,27 +2271,168 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         draggedSlot = null;
         ClearSharedDragState();
 
-        RebuildSlotVisualsFromCurrentState();
-        RebuildSlotsLayout();
-        RefreshOccupiedHighlights();
-
+        // Zabierz ilość ze źródła: Inventory albo Box.
         if (!splitSource.RemoveStackAmountFromOwner(sourceItem, amount))
-            return false;
-
-        if (!TryAddItemAt(targetIndex, part))
         {
-            // awaryjna cofka, gdyby slot jednak się zmienił między preview a kliknięciem
-            sourceItem.count += amount;
-            RefreshCountDisplay(sourceItem);
+            RefreshSourceOwnerAfterStackChange(splitSource, sourceItem);
+            RefreshOccupiedHighlights();
             return false;
         }
 
-        RebuildSlotVisualsFromCurrentState();
-        RebuildSlotsLayout();
-        RefreshCountDisplay(sourceItem);
+        // Dodaj nową część do Inventory w konkretny slot.
+        if (!TryAddItemAt(targetIndex, part))
+        {
+            // Cofka: RemoveStackAmountFromOwner tylko zmniejszył count,
+            // więc oddajemy ilość do TEGO SAMEGO sourceItem.
+            sourceItem.count += amount;
+
+            RefreshSourceOwnerAfterStackChange(splitSource, sourceItem);
+            RefreshOccupiedHighlights();
+            RefreshGunUIFromWeaponManager();
+
+            return false;
+        }
+
+        // Granaty są stackiem — nie rejestruj ich jak nowej broni.
+        if (part.data is GrenadeItemData)
+        {
+            EnsureWeaponManager();
+            weaponManager?.SyncGrenadeSlotFromInventory(part.data);
+        }
+        else if (splitSource is BoxInventoryUI && IsCombatItemData(part.data))
+        {
+            if (!RegisterWeaponFromBoxTransfer(part))
+            {
+                ForceRemoveItemCompletely(part);
+
+                sourceItem.count += amount;
+
+                RefreshSourceOwnerAfterStackChange(splitSource, sourceItem);
+                RefreshOccupiedHighlights();
+                RefreshGunUIFromWeaponManager();
+
+                return false;
+            }
+        }
+
+        RefreshSourceOwnerAfterStackChange(splitSource, sourceItem);
+
+        SetDraggingVisualForItem(part, false);
         RefreshCountDisplay(part);
+        RebuildSlotsLayout();
         RefreshOccupiedHighlights();
         RefreshGunUIFromWeaponManager();
+
+        return true;
+    }
+
+    private bool TryQuickSplitDraggedStackIntoInventorySlot(InventorySlot targetSlot)
+    {
+        if (targetSlot == null || targetSlot.item == null || targetSlot.item.data == null)
+            return false;
+
+        if (draggedItem == null || draggedItem.data == null)
+            return false;
+
+        InventoryItemInstance sourceItem = draggedItem;
+        InventoryItemInstance targetItem = targetSlot.item;
+        IInventorySlotOwner sourceOwner = DragSourceOwner;
+
+        if (sourceOwner == null)
+            return false;
+
+        if (!InventoryStackService.CanMergeStacks(sourceItem, targetItem))
+            return false;
+
+        bool sameOwner = ReferenceEquals(sourceOwner, this);
+        int amount = InventoryStackService.GetQuickSplitHalfAmount(sourceItem, sameOwner);
+
+        if (amount <= 0)
+            return false;
+
+        SetDraggingVisualForItem(sourceItem, false);
+        HideDragGhost();
+
+        dragController?.ResetPointerOffset();
+        SetDraggedGrabCellOffset(0, 0);
+        ClearPlacementPreview();
+
+        bool removed = sourceOwner.RemoveStackAmountFromOwner(sourceItem, amount);
+        if (!removed)
+            return false;
+
+        targetItem.count += amount;
+        RefreshCountDisplay(targetItem);
+
+        if (targetItem.data is GrenadeItemData)
+        {
+            EnsureWeaponManager();
+            weaponManager?.SyncGrenadeSlotFromInventory(targetItem.data);
+        }
+
+        draggedSlot = null;
+        ClearSharedDragState();
+
+        if (sourceOwner is InventoryUI invSource)
+            invSource.RefreshVisualsAfterExternalStackChange(sourceItem);
+        else if (sourceOwner is BoxInventoryUI boxSource)
+            boxSource.RefreshVisualsAfterExternalStackChange(sourceItem);
+
+        RefreshVisualsAfterExternalStackChange(targetItem);
+        RefreshGunUIFromWeaponManager();
+
+        return true;
+    }
+
+    private void RefreshSourceOwnerAfterStackChange(
+    IInventorySlotOwner sourceOwner,
+    InventoryItemInstance sourceItem)
+    {
+        if (sourceOwner is InventoryUI invSource)
+        {
+            invSource.RefreshVisualsAfterExternalStackChange(sourceItem);
+        }
+        else if (sourceOwner is BoxInventoryUI boxSource)
+        {
+            boxSource.RefreshVisualsAfterExternalStackChange(sourceItem);
+        }
+    }
+
+    public bool TryRelayoutDraggedItemAfterRotation(InventoryItemInstance item)
+    {
+        if (item == null || item.data == null || grid == null)
+            return false;
+
+        int startIndex = grid.GetTopLeftIndexForItem(item);
+
+        if (startIndex < 0)
+            startIndex = draggedOriginSlotIndex;
+
+        if (startIndex < 0)
+            return false;
+
+        ForceRemoveItemCompletely(item);
+
+        int width = GetItemWidth(item);
+        int height = GetItemHeight(item);
+
+        if (!CanFitShape(startIndex, width, height, slotsPerRow))
+        {
+            item.ToggleRotation();
+
+            width = GetItemWidth(item);
+            height = GetItemHeight(item);
+
+            if (!CanFitShape(startIndex, width, height, slotsPerRow))
+                return false;
+        }
+
+        TryAddItemAt(startIndex, item);
+
+        SetDraggingVisualForItem(item, true);
+
+        RebuildSlotsLayout();
+        RefreshOccupiedHighlights();
 
         return true;
     }
@@ -2157,7 +2473,7 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 
         return weaponBridge != null && weaponBridge.CanReceiveWeaponFromBox(item);
     }
-    
+
     public bool RegisterWeaponFromBoxTransfer(InventoryItemInstance item)
     {
         if (weaponBridge == null)
@@ -2172,6 +2488,7 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             InitWeaponBridge();
 
         weaponBridge?.RefreshGunUI();
+
     }
 
     public bool TryTransferCombatItemFromBoxToPlayer(

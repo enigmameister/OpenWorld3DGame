@@ -1,9 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
-
-#if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
-#endif
 
 public class InventoryDragController
 {
@@ -142,16 +139,21 @@ public class InventoryDragController
         if (!RotatePressedThisFrame())
             return;
 
+        // Obracamy tylko ghost + dane itemu.
+        // Source grid zostaje logicznie tak jak by³ do momentu dropu.
         item.ToggleRotation();
 
         RebuildGhostShapeAfterRotation(item);
 
         clearInventoryPreview?.Invoke();
         clearBoxPreview?.Invoke();
+
+        refreshOccupiedHighlights?.Invoke();
     }
 
     private bool RotatePressedThisFrame()
     {
+
 #if ENABLE_INPUT_SYSTEM
         return Mouse.current != null && Mouse.current.rightButton.wasPressedThisFrame;
 #else
