@@ -14,6 +14,13 @@ public class CarInteraction : MonoBehaviour
     public GameObject weaponInventoryObject;
     public Transform exitPoint;
 
+    [Header("Weapon UI")]
+    [SerializeField] private GunUI gunUI;
+    [SerializeField] private GameObject gunUiRoot;
+
+    private bool gunUiRootWasActive = true;
+    private bool gunUiStateCached = false;
+
     [Header("UI (interakcja)")]
     public GameObject loadingBarRoot;
     public Image loadingBarFill;
@@ -102,6 +109,12 @@ public class CarInteraction : MonoBehaviour
 
         if (weaponInventoryObject != null)
             wm = weaponInventoryObject.GetComponent<WeaponManager>();
+
+        if (gunUI == null)
+            gunUI = FindFirstObjectByType<GunUI>();
+
+        if (gunUiRoot == null && gunUI != null)
+            gunUiRoot = gunUI.gameObject;
 
         if (loadingBarRoot != null)
             loadingBarRoot.SetActive(false);
@@ -277,6 +290,36 @@ public class CarInteraction : MonoBehaviour
         currentCameraTarget = null;
     }
 
+    private void SetGunUIVisible(bool visible)
+    {
+        if (gunUI == null)
+            gunUI = FindFirstObjectByType<GunUI>();
+
+        if (gunUiRoot == null && gunUI != null)
+            gunUiRoot = gunUI.gameObject;
+
+        if (gunUiRoot == null)
+            return;
+
+        if (!visible)
+        {
+            gunUiRootWasActive = gunUiRoot.activeSelf;
+            gunUiStateCached = true;
+            gunUiRoot.SetActive(false);
+            return;
+        }
+
+        if (gunUiStateCached)
+            gunUiRoot.SetActive(gunUiRootWasActive);
+        else
+            gunUiRoot.SetActive(true);
+
+        if (wm != null)
+            wm.RefreshWeaponHUD();
+
+        InventoryUI.Instance?.RefreshGunUIFromWeaponManager();
+    }
+
     IEnumerator EnterCarRoutine()
     {
         if (carDestructible != null && carDestructible.isPermanentlyDestroyed)
@@ -328,6 +371,9 @@ public class CarInteraction : MonoBehaviour
         if (carCamera != null) carCamera.SetActive(true);
         if (playerCamera != null) playerCamera.SetActive(false);
         if (PlayerGUI != null) PlayerGUI.SetActive(true);
+
+        // chowamy tylko HUD broni, ale zostawiamy PlayerGUI/car UI
+        SetGunUIVisible(false);
 
         if (wm != null)
             wm.enabled = false;
@@ -419,6 +465,9 @@ public class CarInteraction : MonoBehaviour
 
         if (wm != null)
             wm.enabled = true;
+
+        // po powrocie do gracza przywracamy HUD broni
+        SetGunUIVisible(true);
 
         if (carCameras != null)
         {

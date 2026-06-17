@@ -687,12 +687,7 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             instance.count = Mathf.Max(1, instance.count);
         }
 
-        // Stack tylko gdy to nie jest indywidualny magazynek i nie jest karta bankowa.
-        bool isBankCard = instance.data is BankCardItemData || instance.hasBankCardMeta;
-
-        bool canStack =
-            !(instance.data is AmmoItemData ammo && ammo.individualMagazines) &&
-            !isBankCard;
+        bool canStack = InventoryStackService.IsStackableItem(instance);
 
         if (canStack)
         {
@@ -701,29 +696,44 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
                 if (slot == null || slot.item == null)
                     continue;
 
-                if (InventoryStackService.CanMergeStacks(instance, slot.item))
+                if (!InventoryStackService.CanMergeStacks(instance, slot.item))
+                    continue;
+
+                int maxStack = Mathf.Max(1, instance.data.maxStack);
+                int free = Mathf.Max(0, maxStack - slot.item.count);
+
+                if (free <= 0)
+                    continue;
+
+                int addAmount = Mathf.Min(Mathf.Max(1, instance.count), free);
+
+                slot.item.count += addAmount;
+                instance.count -= addAmount;
+
+                slot.UpdateCountDisplay();
+
+                if (instance.data is GrenadeItemData)
                 {
-                    int addAmount = Mathf.Max(1, instance.count);
-
-                    slot.item.count += addAmount;
-                    slot.UpdateCountDisplay();
-
-                    if (instance.data is GrenadeItemData)
-                    {
-                        if (weaponBridge == null) InitWeaponBridge();
-                        weaponBridge?.SyncGrenadeSlotFromInventory(instance.data);
-                    }
-
-                    RefreshGunUIFromWeaponManager();
-                    RefreshOccupiedHighlights();
-
-                    return true;
+                    if (weaponBridge == null) InitWeaponBridge();
+                    weaponBridge?.SyncGrenadeSlotFromInventory(instance.data);
                 }
+
+                RefreshGunUIFromWeaponManager();
+                RefreshOccupiedHighlights();
+
+                // Cały stack został wchłonięty.
+                if (instance.count <= 0)
+                    return true;
+
+                // Jeśli część stacka została, lecimy dalej:
+                // najpierw próbujemy merge do kolejnego stacka,
+                // a potem auto-placement reszty jako nowy stack.
             }
         }
 
-        // Auto-placement 2D:
-        // TryAddItemAt() samo sprawdza WidthSlots / HeightSlots / rotated.
+        // Auto-placement 2D dla:
+        // - niestackowalnych itemów, np. broń,
+        // - pozostałości stacka, jeśli maxStack był pełny/częściowo zapełniony.
         for (int index = 0; index < slotList.Count; index++)
         {
             if (TryAddItemAt(index, instance))

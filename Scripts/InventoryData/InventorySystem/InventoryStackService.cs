@@ -6,6 +6,28 @@ using UnityEngine.InputSystem;
 
 public static class InventoryStackService
 {
+    public static bool IsStackableItem(InventoryItemInstance item)
+    {
+        if (item == null || item.data == null)
+            return false;
+
+        if (item.data is BankCardItemData)
+            return false;
+
+        if (item.hasBankCardMeta)
+            return false;
+
+        if (item.data is AmmoItemData ammo && ammo.individualMagazines)
+            return false;
+
+        // Granaty zawsze mog¹ byæ stackiem.
+        if (item.data is GrenadeItemData)
+            return true;
+
+        // Pozosta³e tylko jeœli asset jawnie pozwala.
+        return item.data.stackable;
+    }
+
     public static bool CanSplitStack(InventoryItemInstance item)
     {
         if (item == null || item.data == null)
@@ -14,13 +36,7 @@ public static class InventoryStackService
         if (item.count <= 1)
             return false;
 
-        if (item.data is AmmoItemData ammo && ammo.individualMagazines)
-            return false;
-
-        if (item.data is BankCardItemData)
-            return false;
-
-        if (item.hasBankCardMeta)
+        if (!IsStackableItem(item))
             return false;
 
         return true;
@@ -40,13 +56,15 @@ public static class InventoryStackService
         if (source.data != target.data)
             return false;
 
-        if (source.data is AmmoItemData ammo && ammo.individualMagazines)
+        if (!IsStackableItem(source))
             return false;
 
-        if (source.data is BankCardItemData || target.data is BankCardItemData)
+        if (!IsStackableItem(target))
             return false;
 
-        if (source.hasBankCardMeta || target.hasBankCardMeta)
+        int maxStack = Mathf.Max(1, source.data.maxStack);
+
+        if (target.count >= maxStack)
             return false;
 
         return true;
