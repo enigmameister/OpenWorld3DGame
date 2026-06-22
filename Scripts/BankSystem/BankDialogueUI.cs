@@ -2,30 +2,12 @@
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
-using UnityEngine.UI;
 
 public class BankDialogueUI : MonoBehaviour
 {
-    [Header("Root")]
-    public CanvasGroup root;
-
-    [Header("Wheel Root (container na kółko + buttony A/B/C/D)")]
-    public GameObject wheelRoot;
-
-    [Header("Text")]
-    public TextMeshProUGUI nameText;
-    public TextMeshProUGUI bodyText; // (nieużywane w tej wersji, może zostać)
-    public TextMeshProUGUI historyText;
-    public ScrollRect historyScrollRect;
-
-    [Header("Current Line (Text_1)")]
-    public TextMeshProUGUI currentLineText;
-    public ScrollRect currentLineScroll; // ScrollRect na CurrentLineViewport (Content = CurrentLineContent)
-
-    [Header("Typing")]
-    public float charsPerSecond = 40f;
+    [Header("Shared Dialogue Window")]
+    [SerializeField] private DialogueWindowUI window;
 
     [Header("Dialogue Graphs")]
     public DialogueGraphRegistry registry;
@@ -62,91 +44,36 @@ public class BankDialogueUI : MonoBehaviour
     public float npcPostDelay = 0.25f;
     public float playerPostDelay = 0.6f;
 
-    [Header("Typing Colors")]
-    public Color unspokenColor = new Color(0.6f, 0.6f, 0.6f, 1f);
-    public Color npcSpokenColor = new Color(0.2f, 1f, 0.2f, 1f);
-    public Color playerSpokenColor = new Color(1f, 0.9f, 0.2f, 1f);
-
-    [Header("History")]
-    public int maxHistoryLines = 4;
-
-    [Header("Auto Follow / Teleprompter")]
-    public bool followToBottomOnOverflow = true;
-    public float followSmooth = 12f;     // szybkość “dociągania” scrolla
-    public int keepContextLines = 1;     // ile linijek zostawić u góry
-
-    [Header("Dynamic Options")]
-    public RectTransform optionsRoot;
-    public Button optionButtonPrefab;
-    public float ringRadius1 = 170f;
-    public float ringRadius2 = 260f;
-    public float ringRadiusStep = 90f;
-    public float startAngleDeg = 90f;
-    public bool clockwise = true;
-    public int slotsPerRing = 8;
-    public float optionMinWidth = 220f;
-    public float optionMaxWidth = 420f;
-    public float optionPaddingX = 40f;
-    public float optionPaddingY = 22f;
-    public float centerClearance = 90f;
-
     // ===== runtime =====
     public bool IsOpen { get; private set; }
-
-    private readonly Queue<string> _history = new();
-    private string _historyJoined = "";
-
-    private readonly List<Button> _spawnedOptionButtons = new();
 
     private DialogueGraph _graph;
     private DialogueNode _node;
     private string _npcName = "NPC";
 
-    private Coroutine _typing;
     private Coroutine _postDelay;
-    private bool _isTyping;
     private bool _waitingForChoice;
     private bool _currentTypingIsPlayer;
 
     private string _currentLineFull = "";
-    private System.Action _pendingOnDone;
-    private string _pendingSpeaker;
-
-    // manual scroll state
-    private bool _userScrolledCurrentLine = false;
-    private float _userScrollCooldown = 0f;
-
-    // auto follow target (1 = top, 0 = bottom)
-    private float _currentLineTargetNorm = 1f;
-
-    // teleprompter: która linia TMP jest aktualnie u góry
-    private int _topLineIndex = 0;
 
     // return-token (zostawiłem, bo masz w kodzie)
     private string _returnAfterIdToken;
-
-    // ======= ANGLES =======
-    private static readonly float[] SLOT_ANGLES_4 = { 180f, 0f, 90f, 270f };
-    private static readonly float[] SLOT_ANGLES_8 = { 180f, 0f, 90f, 270f, 135f, 45f, 225f, 315f };
 
     private bool _sessionIdVerified = false;
     private string _sessionCitizenId = null;
     public event System.Action DialogueClosed;
 
-
     void Awake()
     {
-        HideImmediate();
-        HideOptions();
+        EnsureWindow();
 
-        if (historyText) historyText.richText = true;
-        if (currentLineText) currentLineText.richText = true;
+        if (window != null)
+            window.CloseWindowImmediate();
 
-        if (bodyText)
-        {
-            bodyText.textWrappingMode = TextWrappingModes.Normal;
-            bodyText.overflowMode = TextOverflowModes.Overflow;
-        }
+        ShowUseIdHint(false);
+
+
     }
 
     void Update()
@@ -154,14 +81,15 @@ public class BankDialogueUI : MonoBehaviour
         if (SuppressEscapeFrames > 0)
         {
             SuppressEscapeFrames--;
-            return; // ignoruj ESC i resztę inputu
+            return;
         }
-        if (!IsOpen) return;
+
+        if (!IsOpen)
+            return;
 
         if (BankUiState.AnyUiOpen)
             return;
 
-        // na początku Update, po if(!IsOpen) return;
         if (Input.GetKeyDown(KeyCode.Escape))
         {
             var accOps = FindFirstObjectByType<AccountOperationsUI>(FindObjectsInactive.Include);
@@ -169,13 +97,13 @@ public class BankDialogueUI : MonoBehaviour
                 return;
         }
 
-        // Confirm ID with E (only when we are waiting)
         bool interactThisFrame =
             (PlayerInputHandler.Instance != null && PlayerInputHandler.Instance.InteractPressedThisFrame) ||
-            Input.GetKeyDown(KeyCode.E); // fallback jakby handler był wyłączony
+            Input.GetKeyDown(KeyCode.E);
 
+        bool windowTyping = window != null && window.IsTyping;
 
-        if (_confirmMode != InteractConfirmMode.None && !_isTyping && interactThisFrame)
+        if (_confirmMode != InteractConfirmMode.None && !windowTyping && interactThisFrame)
         {
             var mode = _confirmMode;
             _confirmMode = InteractConfirmMode.None;
@@ -188,23 +116,24 @@ public class BankDialogueUI : MonoBehaviour
 
                 if (bank == null || string.IsNullOrWhiteSpace(cid) || !bank.HasCitizenId(cid))
                 {
-                    // brak ID -> pokaż NO_ID
                     if (TryResolveNext("graph:Account/NO_ID", out var gNo, out var nNo))
                     {
                         _graph = gNo;
                         GoToNode(nNo);
                     }
-                    else Close();
+                    else
+                    {
+                        Close();
+                    }
+
                     return;
                 }
 
-                // ✅ TU utrwalamy sesję
                 _sessionIdVerified = true;
                 _sessionCitizenId = cid;
 
                 Debug.Log($"[BANK SESJA] ID ZWERYFIKOWANE (SHOW_ID confirm): citizenId={cid}");
 
-                // idź do sprawdzania konta
                 if (!TryResolveNext("graph:Account/ACCOUNT_CHECK", out var nextGraph, out var nextNode))
                 {
                     Close();
@@ -216,15 +145,11 @@ public class BankDialogueUI : MonoBehaviour
                 return;
             }
 
-
             if (mode == InteractConfirmMode.PayAccountFee)
             {
-                // Tutaj TYLKO zgoda gracza na rozpoczęcie procedury.
-                // Gotówkę pobierzemy dopiero w BankAccountCreateUI po finalnym CONFIRM.
                 StartCoroutine(CoCreateAccountFlowAfterPayment());
                 return;
             }
-
         }
 
         if (IsAnyBankUiOpen())
@@ -234,16 +159,15 @@ public class BankDialogueUI : MonoBehaviour
         {
             if (_graph != null)
             {
-                // jeśli jesteśmy na starcie -> ESC = definitywne wyjście
                 if (_node != null && string.Equals(_node.id, _graph.startNodeId, System.StringComparison.OrdinalIgnoreCase))
                 {
-                    Close(); // unlockPlayer = true
+                    Close();
                     return;
                 }
 
-                // w przeciwnym wypadku -> wróć do startu bez zamykania
                 var start = _graph.GetNode(_graph.startNodeId);
-                if (start == null && _graph.nodes.Count > 0) start = _graph.nodes[0];
+                if (start == null && _graph.nodes.Count > 0)
+                    start = _graph.nodes[0];
 
                 if (start != null)
                 {
@@ -253,59 +177,12 @@ public class BankDialogueUI : MonoBehaviour
                 }
             }
 
-            Close(); // fallback
-            return;
+            Close();
         }
-
-        // Skip typing (ale NIE gdy klikamy UI button)
-        if (_isTyping)
-        {
-            bool leftClick = Input.GetMouseButtonDown(0);
-            if (leftClick && EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
-                leftClick = false;
-
-            if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.Return) || leftClick)
-                SkipTyping();
-        }
-
-        // Manual scroll (wheel) - tylko gdy kursor nad viewportem
-        if (currentLineScroll && currentLineScroll.viewport)
-        {
-            float wheel = Input.mouseScrollDelta.y;
-
-            if (Mathf.Abs(wheel) > 0.01f && IsPointerOverRect(currentLineScroll.viewport))
-            {
-                _userScrolledCurrentLine = true;
-                _userScrollCooldown = 1.0f;
-
-                const float wheelStep = 0.12f;
-                currentLineScroll.verticalNormalizedPosition =
-                    Mathf.Clamp01(currentLineScroll.verticalNormalizedPosition + wheel * wheelStep);
-
-                // IMPORTANT: zapamiętaj nowy target (żeby po cooldownie nie “odbijało”)
-                _currentLineTargetNorm = currentLineScroll.verticalNormalizedPosition;
-            }
-
-            if (_userScrolledCurrentLine)
-            {
-                _userScrollCooldown -= Time.unscaledDeltaTime;
-                if (_userScrollCooldown <= 0f)
-                    _userScrolledCurrentLine = false;
-            }
-        }
-
-        // Auto follow do targetu (płynnie) tylko gdy user nie scrolluje
-        if (!currentLineScroll) return;
-        if (_userScrolledCurrentLine) return;
-
-        float cur = currentLineScroll.verticalNormalizedPosition;
-        float t = 1f - Mathf.Exp(-followSmooth * Time.unscaledDeltaTime);
-        float next = Mathf.Lerp(cur, _currentLineTargetNorm, t);
-        currentLineScroll.verticalNormalizedPosition = next;
     }
 
     // === Public API ===
-    
+
     public void OpenDialogueFromRegistry(string graphKey, string npcDisplayName)
     {
         if (registry == null) return;
@@ -315,35 +192,27 @@ public class BankDialogueUI : MonoBehaviour
 
         OpenDialogue(g, npcDisplayName);
     }
-
     public void OpenDialogue(DialogueGraph graph, string npcDisplayName)
     {
-        if (graph == null) return;
+        if (graph == null)
+            return;
 
-        if (bodyText) bodyText.text = "";
-
-        // ---- BLOKADA GRACZA / KURSORA ----
-        MouseLook.IsLookLocked = true;
-        Cursor.visible = true;
-        Cursor.lockState = CursorLockMode.None;
-
-        PlayerMovement.IsMovementLocked = true;
-
-
-        var wm = FindFirstObjectByType<WeaponManager>();
-        if (wm) wm.enabled = false;
-        // ----------------------------------
+        if (!EnsureWindow())
+            return;
 
         _graph = graph;
         _npcName = string.IsNullOrWhiteSpace(npcDisplayName) ? "NPC" : npcDisplayName;
+
         _sessionGraph = graph;
-        _sessionNpcName = _npcName; // po tym jak ustawisz _npcName
+        _sessionNpcName = _npcName;
 
         IsOpen = true;
-        ShowRoot(true);
+
+        window.OpenWindow(clearHistory: true, lockPlayer: true);
 
         var start = _graph.GetNode(_graph.startNodeId);
-        if (start == null && _graph.nodes.Count > 0) start = _graph.nodes[0];
+        if (start == null && _graph.nodes.Count > 0)
+            start = _graph.nodes[0];
 
         GoToNode(start);
     }
@@ -355,27 +224,23 @@ public class BankDialogueUI : MonoBehaviour
 
     public void Close(bool unlockPlayer)
     {
-        if (!IsOpen) return; // ✅ guard przed double-close
+        if (!IsOpen)
+            return;
 
         StopTyping();
         HideOptions();
+        ShowUseIdHint(false);
 
         IsOpen = false;
         _graph = null;
         _node = null;
+        _waitingForChoice = false;
 
-        ShowRoot(false);
-
-        // ✅ Bezpiecznik: NIGDY nie zostawiaj movement locked po zamknięciu dialogu.
-        // (look/cursor zostawiamy zależnie od unlockPlayer)
-        PlayerMovement.IsMovementLocked = false;
-
-        if (unlockPlayer)
-            UnlockPlayerAndCursor();
+        if (window != null)
+            window.CloseWindow(unlockPlayer);
 
         DialogueClosed?.Invoke();
     }
-
 
     private void UnlockPlayerAndCursor()
     {
@@ -571,440 +436,86 @@ public class BankDialogueUI : MonoBehaviour
 
     private void TypeLine(string speaker, string line, System.Action onDone)
     {
+        if (!EnsureWindow())
+            return;
+
         StopTyping();
         HideOptions();
 
-        _pendingOnDone = onDone;
-        _pendingSpeaker = speaker;
-
-        _currentTypingIsPlayer = (speaker == "PLAYER");
+        _currentTypingIsPlayer = string.Equals(speaker, "PLAYER", System.StringComparison.OrdinalIgnoreCase);
         _currentLineFull = line ?? "";
 
-        if (nameText) nameText.text = speaker + ":";
-
-        Color spokenColor = _currentTypingIsPlayer ? playerSpokenColor : npcSpokenColor;
-
-        // HISTORY: tylko zatwierdzona historia
-        if (historyText) historyText.text = _historyJoined;
-        ForceHistoryScrollToBottom();
-
-        // CURRENT LINE: reset + snap top-left
-        if (currentLineText)
+        window.TypeLine(speaker, _currentLineFull, _currentTypingIsPlayer, () =>
         {
-            currentLineText.text = BuildGreyAndReveal(_currentLineFull, 0, spokenColor);
+            float pause = _currentTypingIsPlayer ? playerPostDelay : npcPostDelay;
 
-            _topLineIndex = 0;
-            _currentLineTargetNorm = 1f;
-            _userScrolledCurrentLine = false;
+            if (_postDelay != null)
+                StopCoroutine(_postDelay);
 
-            if (currentLineScroll)
-                SnapCurrentLineToTopNextFrame();
-        }
-
-        _typing = StartCoroutine(CoType(
-            _currentLineFull,
-            onUpdate: (revealedCount) =>
-            {
-                if (!currentLineText) return;
-
-                currentLineText.text = BuildGreyAndReveal(_currentLineFull, revealedCount, spokenColor);
-                UpdateCurrentLineFollowTarget(revealedCount);
-            },
-            onDone: () =>
-            {
-                PushHistoryLine(speaker, _currentLineFull);
-
-                _isTyping = false;
-                _typing = null;
-
-                var cb = _pendingOnDone;
-                _pendingOnDone = null;
-                _pendingSpeaker = null;
-
-                cb?.Invoke();
-            }
-        ));
+            _postDelay = StartCoroutine(CoPostDelayThenInvoke(onDone, pause));
+        });
     }
 
-    private IEnumerator CoType(string text, System.Action<int> onUpdate, System.Action onDone)
+    private IEnumerator CoPostDelayThenInvoke(System.Action onDone, float delay)
     {
-        _isTyping = true;
-
-        float delay = (charsPerSecond <= 0f) ? 0f : 1f / charsPerSecond;
-        int len = text?.Length ?? 0;
-
-        for (int i = 0; i < len; i++)
-        {
-            onUpdate?.Invoke(i + 1);
-            if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
-            else yield return null;
-        }
-
-        onUpdate?.Invoke(len);
-
-        float pause = _currentTypingIsPlayer ? playerPostDelay : npcPostDelay;
-        if (pause > 0f) yield return new WaitForSecondsRealtime(pause);
+        if (delay > 0f)
+            yield return new WaitForSecondsRealtime(delay);
 
         onDone?.Invoke();
-    }
-
-    private void SkipTyping()
-    {
-        if (!_isTyping) return;
-
-        StopTyping();
-
-        Color spokenColor = _currentTypingIsPlayer ? playerSpokenColor : npcSpokenColor;
-
-        if (currentLineText)
-        {
-            currentLineText.text = BuildGreyAndReveal(_currentLineFull, _currentLineFull.Length, spokenColor);
-            UpdateCurrentLineFollowTarget(_currentLineFull.Length);
-        }
-
-        PushHistoryLine(_pendingSpeaker ?? "NPC", _currentLineFull);
-
-        _isTyping = false;
-
-        if (_postDelay != null) StopCoroutine(_postDelay);
-        _postDelay = StartCoroutine(CoPostDelayThenInvoke());
-    }
-
-    private IEnumerator CoPostDelayThenInvoke()
-    {
-        float pause = _currentTypingIsPlayer ? playerPostDelay : npcPostDelay;
-        if (pause > 0f) yield return new WaitForSecondsRealtime(pause);
-
-        var cb = _pendingOnDone;
-        _pendingOnDone = null;
-        _pendingSpeaker = null;
-
-        cb?.Invoke();
         _postDelay = null;
     }
 
     private void StopTyping()
     {
-        if (_typing != null) { StopCoroutine(_typing); _typing = null; }
-        _isTyping = false;
 
-        if (_postDelay != null) { StopCoroutine(_postDelay); _postDelay = null; }
+
+        if (_postDelay != null)
+        {
+            StopCoroutine(_postDelay);
+            _postDelay = null;
+        }
     }
 
     // ===== History =====
 
-    private void PushHistoryLine(string speaker, string line)
-    {
-        string s = $"{speaker}: {line}";
-
-        _history.Enqueue(s);
-        while (_history.Count > Mathf.Max(1, maxHistoryLines))
-            _history.Dequeue();
-
-        _historyJoined = string.Join("\n", _history);
-
-        if (historyText) historyText.text = _historyJoined;
-        ForceHistoryScrollToBottom();
-    }
-
-    private void ForceHistoryScrollToBottom()
-    {
-        if (!historyScrollRect) return;
-        Canvas.ForceUpdateCanvases();
-        historyScrollRect.verticalNormalizedPosition = 0f;
-        Canvas.ForceUpdateCanvases();
-    }
-
     private void ClearHistory()
     {
-        _history.Clear();
-        _historyJoined = "";
-        if (historyText) historyText.text = "";
-        if (currentLineText) currentLineText.text = "";
-    }
-
-    // ===== Current line scroll logic (teleprompter) =====
-
-    private void SnapCurrentLineToTopNextFrame()
-    {
-        if (!currentLineScroll || !currentLineText) return;
-        StartCoroutine(CoSnapCurrentLineToTop());
-    }
-
-    private IEnumerator CoSnapCurrentLineToTop()
-    {
-        yield return null; // poczekaj 1 frame
-
-        currentLineText.ForceMeshUpdate();
-
-        Canvas.ForceUpdateCanvases();
-        if (currentLineScroll.content)
-            LayoutRebuilder.ForceRebuildLayoutImmediate(currentLineScroll.content);
-        Canvas.ForceUpdateCanvases();
-
-        currentLineScroll.verticalNormalizedPosition = 1f;
-        _currentLineTargetNorm = 1f;
-        Canvas.ForceUpdateCanvases();
-    }
-
-    private void UpdateCurrentLineFollowTarget(int revealedCount)
-    {
-        if (!followToBottomOnOverflow) return;
-        if (!currentLineScroll || !currentLineText) return;
-        if (_userScrolledCurrentLine) return;
-
-        currentLineText.ForceMeshUpdate();
-        var ti = currentLineText.textInfo;
-        if (ti == null || ti.lineCount <= 0)
-        {
-            _currentLineTargetNorm = 1f;
-            _topLineIndex = 0;
-            return;
-        }
-
-        if (revealedCount <= 0)
-        {
-            _currentLineTargetNorm = 1f;
-            _topLineIndex = 0;
-            return;
-        }
-
-        int charIndex = Mathf.Clamp(revealedCount - 1, 0, ti.characterCount - 1);
-        int lastLine = ti.characterInfo[charIndex].lineNumber;
-
-        float viewH = ((RectTransform)currentLineScroll.viewport).rect.height;
-
-        // policz ile linii mieści się w viewport od aktualnego _topLineIndex
-        int visibleLines = 0;
-        float sum = 0f;
-
-        for (int i = _topLineIndex; i < ti.lineCount; i++)
-        {
-            var li = ti.lineInfo[i];
-            float lineH = (li.ascender - li.descender);
-            if (lineH <= 0.01f) lineH = currentLineText.fontSize;
-
-            if (visibleLines == 0 || sum + lineH <= viewH + 0.5f)
-            {
-                sum += lineH;
-                visibleLines++;
-            }
-            else break;
-        }
-
-        visibleLines = Mathf.Max(1, visibleLines);
-
-        int bottomIndexAllowed = _topLineIndex + visibleLines - 1;
-
-        if (lastLine > bottomIndexAllowed)
-        {
-            int context = Mathf.Clamp(keepContextLines, 0, visibleLines - 1);
-            _topLineIndex = lastLine - (visibleLines - 1 - context);
-            _topLineIndex = Mathf.Clamp(_topLineIndex, 0, Mathf.Max(0, ti.lineCount - 1));
-        }
-
-        // mapuj topLineIndex na normalized scroll
-        RebuildCurrentLineLayout();
-
-        float contentH = currentLineScroll.content.rect.height;
-        float maxScroll = Mathf.Max(0f, contentH - viewH);
-
-        if (maxScroll <= 0.001f)
-        {
-            _currentLineTargetNorm = 1f;
-            return;
-        }
-
-        float yTop0 = ti.lineInfo[0].ascender;
-        float yTopLine = ti.lineInfo[_topLineIndex].ascender;
-
-        float offset = Mathf.Max(0f, yTop0 - yTopLine);
-        offset = Mathf.Clamp(offset, 0f, maxScroll);
-
-        _currentLineTargetNorm = 1f - (offset / maxScroll);
-    }
-
-    private void RebuildCurrentLineLayout()
-    {
-        if (!currentLineScroll) return;
-
-        if (currentLineText) currentLineText.ForceMeshUpdate();
-
-        Canvas.ForceUpdateCanvases();
-        if (currentLineScroll.content)
-            LayoutRebuilder.ForceRebuildLayoutImmediate(currentLineScroll.content);
-        Canvas.ForceUpdateCanvases();
+        if (window != null)
+            window.ClearHistory();
     }
 
     // ===== Options UI =====
 
     private void ShowOptions(List<DialogueOption> options)
     {
-        if (wheelRoot) wheelRoot.SetActive(true);
-
-        if (options == null) options = new List<DialogueOption>();
-
-        if (optionsRoot == null && wheelRoot != null)
-            optionsRoot = wheelRoot.GetComponent<RectTransform>();
-
-        if (optionsRoot == null || optionButtonPrefab == null)
-        {
-            Debug.LogWarning("[DIALOGUE] optionsRoot lub optionButtonPrefab nie są ustawione.");
+        if (!EnsureWindow())
             return;
-        }
 
-        ClearSpawnedOptions();
+        if (options == null)
+            options = new List<DialogueOption>();
 
-        float GetRingRadius(int ringIndex)
-        {
-            if (ringIndex == 0) return ringRadius1;
-            if (ringIndex == 1) return ringRadius2;
-            return ringRadius2 + (ringIndex - 1) * ringRadiusStep;
-        }
+        List<string> optionTexts = new List<string>();
 
         for (int i = 0; i < options.Count; i++)
         {
-            if (string.IsNullOrWhiteSpace(options[i].playerText))
+            if (options[i] == null)
+            {
+                optionTexts.Add("");
                 continue;
-
-            int ring = i / slotsPerRing;
-            int slot = i % slotsPerRing;
-
-            float angle;
-            if (options.Count <= 4 && slot < SLOT_ANGLES_4.Length) angle = SLOT_ANGLES_4[slot];
-            else if (options.Count <= 8 && slot < SLOT_ANGLES_8.Length) angle = SLOT_ANGLES_8[slot];
-            else
-            {
-                float step = 360f / slotsPerRing;
-                angle = startAngleDeg + slot * step * (clockwise ? -1f : 1f);
             }
 
-            var btn = Instantiate(optionButtonPrefab, optionsRoot);
-            _spawnedOptionButtons.Add(btn);
-
-            var rt = btn.GetComponent<RectTransform>();
-            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.pivot = new Vector2(0.5f, 0.5f);
-            rt.localRotation = Quaternion.identity;
-            rt.localScale = Vector3.one;
-
-            var tmp = btn.GetComponentInChildren<TextMeshProUGUI>(true);
-            if (tmp)
-            {
-                tmp.text = options[i].playerText;
-                tmp.textWrappingMode = TextWrappingModes.Normal;
-                tmp.overflowMode = TextOverflowModes.Overflow;
-
-                float maxTextW = optionMaxWidth - optionPaddingX;
-                float minTextW = optionMinWidth - optionPaddingX;
-
-                Vector2 pref = tmp.GetPreferredValues(tmp.text, maxTextW, 0f);
-
-                float textW = Mathf.Clamp(pref.x, minTextW, maxTextW);
-                float bubbleW = textW + optionPaddingX;
-                float bubbleH = pref.y + optionPaddingY;
-
-                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, bubbleW);
-                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, bubbleH);
-
-                var tmpRT = tmp.rectTransform;
-                tmpRT.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, textW);
-                tmpRT.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, pref.y);
-            }
-
-            Canvas.ForceUpdateCanvases();
-            LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
-
-            float rad = angle * Mathf.Deg2Rad;
-            float baseRadius = GetRingRadius(ring);
-
-            float halfW = rt.rect.width * 0.5f;
-            float halfH = rt.rect.height * 0.5f;
-            float halfDiag = Mathf.Sqrt(halfW * halfW + halfH * halfH);
-            float radius = Mathf.Max(baseRadius, centerClearance + halfDiag);
-
-            rt.anchoredPosition = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad)) * radius;
-            Vector2 pos = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad)) * radius;
-            rt.anchoredPosition = pos;
-
-            Vector2 dir = pos.sqrMagnitude > 0.0001f ? pos.normalized : Vector2.up;
-            PushOutUntilNoOverlap(rt, dir, radius);
-
-            int capturedIndex = i;
-            btn.onClick.RemoveAllListeners();
-            btn.onClick.AddListener(() => OnOptionClicked(capturedIndex));
-
-            btn.gameObject.SetActive(true);
+            optionTexts.Add(options[i].playerText);
         }
+
+        window.ShowOptions(optionTexts, OnOptionClicked);
     }
 
     private void HideOptions()
     {
-        if (wheelRoot) wheelRoot.SetActive(false);
-        ClearSpawnedOptions();
+        if (window != null)
+            window.HideOptions();
     }
 
-    private void ClearSpawnedOptions()
-    {
-        for (int i = 0; i < _spawnedOptionButtons.Count; i++)
-        {
-            if (_spawnedOptionButtons[i] != null)
-                Destroy(_spawnedOptionButtons[i].gameObject);
-        }
-        _spawnedOptionButtons.Clear();
-    }
-
-    // ===== Root =====
-
-    private void ShowRoot(bool v)
-    {
-        if (!root) { gameObject.SetActive(v); return; }
-
-        root.alpha = v ? 1f : 0f;
-        root.interactable = v;
-        root.blocksRaycasts = v;
-
-        // 🔥 klucz: gdy chowasz dialog, wyłącz GO żeby Update nie pracował i nie łapał inputu
-        root.gameObject.SetActive(v);
-    }
-
-    private void HideImmediate() => ShowRoot(false);
-
-    // ===== Helpers =====
-
-    private bool IsPointerOverRect(RectTransform rt)
-    {
-        if (!rt) return false;
-
-        var canvas = rt.GetComponentInParent<Canvas>();
-        Camera cam = null;
-        if (canvas && canvas.renderMode != RenderMode.ScreenSpaceOverlay)
-            cam = canvas.worldCamera;
-
-        return RectTransformUtility.RectangleContainsScreenPoint(rt, Input.mousePosition, cam);
-    }
-
-    private static string ColorToHex(Color c) => ColorUtility.ToHtmlStringRGBA(c);
-
-    private static string EscapeTmp(string s)
-    {
-        if (string.IsNullOrEmpty(s)) return "";
-        return s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
-    }
-
-    private string BuildGreyAndReveal(string fullText, int revealedChars, Color revealColor)
-    {
-        string safe = EscapeTmp(fullText ?? "");
-        revealedChars = Mathf.Clamp(revealedChars, 0, safe.Length);
-
-        string a = safe.Substring(0, revealedChars);
-        string b = safe.Substring(revealedChars);
-
-        string revealHex = ColorToHex(revealColor);
-        string greyHex = ColorToHex(unspokenColor);
-
-        return $"<color=#{revealHex}>{a}</color><color=#{greyHex}>{b}</color>";
-    }
 
     // ===== Graph resolve / events (Twoje) =====
 
@@ -1377,61 +888,6 @@ public class BankDialogueUI : MonoBehaviour
         else Close();
     }
 
-
-    private static bool OverlapsInRootSpace(RectTransform a, RectTransform b, RectTransform root, float padding = 6f)
-    {
-        Vector3[] ca = new Vector3[4];
-        Vector3[] cb = new Vector3[4];
-        a.GetWorldCorners(ca);
-        b.GetWorldCorners(cb);
-
-        for (int i = 0; i < 4; i++)
-        {
-            ca[i] = root.InverseTransformPoint(ca[i]);
-            cb[i] = root.InverseTransformPoint(cb[i]);
-        }
-
-        Rect ra = new Rect(ca[0].x, ca[0].y, ca[2].x - ca[0].x, ca[2].y - ca[0].y);
-        Rect rb = new Rect(cb[0].x, cb[0].y, cb[2].x - cb[0].x, cb[2].y - cb[0].y);
-
-        ra.xMin -= padding; ra.xMax += padding;
-        ra.yMin -= padding; ra.yMax += padding;
-
-        return ra.Overlaps(rb);
-    }
-
-    private void PushOutUntilNoOverlap(RectTransform rt, Vector2 dirNorm, float startRadius, float stepRadius = 18f, int maxIters = 20)
-    {
-        if (!optionsRoot) return;
-
-        float r = startRadius;
-
-        for (int it = 0; it < maxIters; it++)
-        {
-            bool hit = false;
-            for (int i = 0; i < _spawnedOptionButtons.Count; i++)
-            {
-                var otherBtn = _spawnedOptionButtons[i];
-                if (!otherBtn) continue;
-
-                var other = otherBtn.GetComponent<RectTransform>();
-                if (!other || other == rt) continue;
-
-                if (OverlapsInRootSpace(rt, other, optionsRoot, 8f))
-                {
-                    hit = true;
-                    break;
-                }
-            }
-
-            if (!hit) return;
-
-            r += stepRadius;
-            rt.anchoredPosition = dirNorm * r;
-            Canvas.ForceUpdateCanvases();
-        }
-    }
-
     private void ShowUseIdHint(bool show, string message = null)
     {
         if (useIdHintRoutine != null) { StopCoroutine(useIdHintRoutine); useIdHintRoutine = null; }
@@ -1542,16 +998,9 @@ public class BankDialogueUI : MonoBehaviour
 
                 // pokaż dialog (jeśli był zamknięty) bez resetu sesji
                 IsOpen = true;
-                ShowRoot(true);
 
-                MouseLook.IsLookLocked = true;
-                Cursor.visible = true;
-                Cursor.lockState = CursorLockMode.None;
-
-                PlayerMovement.IsMovementLocked = true;
-
-                var wm = FindFirstObjectByType<WeaponManager>();
-                if (wm) wm.enabled = false;
+                if (window != null)
+                    window.OpenWindow(clearHistory: true, lockPlayer: true);
 
                 ClearHistory();
                 GoToNode(nAcc);
@@ -1608,17 +1057,9 @@ public class BankDialogueUI : MonoBehaviour
         _confirmMode = InteractConfirmMode.None;
 
         IsOpen = true;
-        ShowRoot(true);
 
-        // utrzymaj locki jak masz
-        MouseLook.IsLookLocked = true;
-        Cursor.visible = true;
-        Cursor.lockState = CursorLockMode.None;
-
-        PlayerMovement.IsMovementLocked = true;
-
-        var wm = FindFirstObjectByType<WeaponManager>();
-        if (wm) wm.enabled = false;
+        if (window != null)
+            window.OpenWindow(clearHistory: true, lockPlayer: true);
 
         ClearHistory();
 
@@ -1646,25 +1087,20 @@ public class BankDialogueUI : MonoBehaviour
 
     public void OpenSingleNpcLine(string npcName, string line, float autoCloseAfter = 2.25f)
     {
-        if (string.IsNullOrWhiteSpace(line)) return;
+        if (string.IsNullOrWhiteSpace(line))
+            return;
 
-        MouseLook.IsLookLocked = true;
-        Cursor.visible = true;
-        Cursor.lockState = CursorLockMode.None;
-        PlayerMovement.IsMovementLocked = true;
-
-        var wm = FindFirstObjectByType<WeaponManager>();
-        if (wm) wm.enabled = false;
+        if (!EnsureWindow())
+            return;
 
         IsOpen = true;
-        ShowRoot(true);
-        HideOptions();
 
         _npcName = string.IsNullOrWhiteSpace(npcName) ? "NPC" : npcName;
         _graph = null;
         _node = null;
 
-        ClearHistory();
+        window.OpenWindow(clearHistory: true, lockPlayer: true);
+        window.HideOptions();
 
         TypeLine(_npcName, line, () =>
         {
@@ -1678,5 +1114,19 @@ public class BankDialogueUI : MonoBehaviour
             yield return new WaitForSecondsRealtime(delay);
 
         Close();
+    }
+
+    private bool EnsureWindow()
+    {
+        if (window == null)
+            window = FindFirstObjectByType<DialogueWindowUI>(FindObjectsInactive.Include);
+
+        if (window == null)
+        {
+            Debug.LogWarning("[BankDialogueUI] DialogueWindowUI missing.");
+            return false;
+        }
+
+        return true;
     }
 }

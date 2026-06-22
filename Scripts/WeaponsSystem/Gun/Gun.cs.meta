@@ -4,16 +4,19 @@ MonoImporter:
   externalObjects: {}
   serializedVersion: 2
   defaultReferences:
+  - adsController: {instanceID: 0}
+  - fovController: {instanceID: 0}
+  - reloadController: {instanceID: 0}
+  - fireController: {instanceID: 0}
+  - weaponRecoil: {instanceID: 0}
+  - scopeController: {instanceID: 0}
   - weaponData: {instanceID: 0}
   - sniperCfg: {instanceID: 0}
   - shotgunCfg: {instanceID: 0}
-  - bulletPrefab: {fileID: 5783399050741087064, guid: 35b49055c0446bc44abd0f5a6bdfa789, type: 3}
+  - bulletPrefab: {instanceID: 0}
   - firePoint: {instanceID: 0}
-  - hitEffectPrefab: {fileID: 7658637001226918092, guid: 04c85f61a55677646ba48f757751bada, type: 3}
-  - reloadBarRoot: {instanceID: 0}
-  - reloadProgressBar: {instanceID: 0}
+  - hitEffectPrefab: {instanceID: 0}
   - recoilController: {instanceID: 0}
-  - adsAnchor: {instanceID: 0}
   - muzzleFlash: {instanceID: 0}
   - shellEjectParticles: {instanceID: 0}
   - playerCamera: {instanceID: 0}

@@ -1,0 +1,46 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: DG_TestHouseMission_Offer
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: 'I see you''re new to the area and could use a hiding place to start...
+      it might be a bit rough at this hour, but let''s get to it...
+
+      I have
+      a job for you. There are armed people roaming the area.
+
+      Eliminate 10
+      aggressive or armed NPCs.
+
+      Don''t kill civilians, as any innocent ones
+      will lower your score.
+
+      Reward: a pass to the hideout.'
+    options:
+    - playerText: I'll do it.
+      nextNodeId: accepted
+      debugEvent: Mission_TestHouse_Accept
+    - playerText: Not now.
+      nextNodeId: declined
+      debugEvent: Mission_TestHouse_Decline
+    endAfterNpcLine: 0
+  - id: accepted
+    npcText: Okay, come back when you eliminate 30 armed NPCs...
+    options: []
+    endAfterNpcLine: 1
+  - id: declined
+    npcText: Back if you change your mind...
+    options: []
+    endAfterNpcLine: 1
+  startNodeId: start

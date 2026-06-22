@@ -7,6 +7,8 @@ using Random = UnityEngine.Random;
 
 public class NPCController : MonoBehaviour, IDamageable
 {
+    private NPCCore core;
+
     public enum NPCReactionType { Coward, Aggressive, Fighter }
 
     [Header("Typ zachowania")]
@@ -36,10 +38,16 @@ public class NPCController : MonoBehaviour, IDamageable
     public static event System.Action<Vector3> OnCowardReportedLastKnownPos;       // po ucieczce
 
     [Header("WeaponsINV")]
-    public Gun[] availableWeapons;
-    [SerializeField] private Transform weaponMountPoint;
-    private Gun equippedGun;
+    public NPCGun[] availableWeapons;
+    private NPCGun equippedGun;
     [SerializeField] private string assignedWeaponName;
+
+    [Header("NPC Weapon Roots")]
+    [SerializeField] private Transform weaponsListRoot;
+
+    [Header("Feature Flags")]
+    [SerializeField] private bool useWeaponSystem = true;
+    [SerializeField] private bool allowWeaponDrop = true;
 
     [Header("Drop / Loot")]
     [Range(0f, 100f)] public float weaponDropChance = 50f;
@@ -79,7 +87,6 @@ public class NPCController : MonoBehaviour, IDamageable
     [SerializeField] private AudioClip hurtSfx;
     [SerializeField] private AudioSource audioSource; // opcjonalnie (może być null)
 
-
     // kolor bazowy (nieserializowany)
     private Color defaultColor;
     public Color DefaultColor => defaultColor;
@@ -90,6 +97,13 @@ public class NPCController : MonoBehaviour, IDamageable
     [SerializeField] private LayerMask losObstaclesMask = ~0; // warstwy, które BLOKUJĄ wzrok
                                                               // na górze pól// na górze pól
     private bool _defenseMode; // Fighter wchodzi do walki tylko, gdy broni Cowarda albo został trafiony
+
+    [Header("Black Aggressive Hunt")]
+    [SerializeField] private bool blackVariantHuntsSilently = true;
+    [SerializeField] private float blackHuntRepathInterval = 0.75f;
+    [SerializeField] private float blackHuntSpeed = 4.5f;
+
+    private float _nextBlackHuntRepath;
 
     [Header("Walka – sekwencja")]
     // NPCController.cs
@@ -181,6 +195,31 @@ public class NPCController : MonoBehaviour, IDamageable
         ApplyBodyColor(defaultColor);
     }
 
+    public void ApplyProfile(NPCProfile profile)
+    {
+        if (profile == null) return;
+
+        reactionType = profile.reactionType;
+        fighterVariant = profile.fighterVariant;
+
+        maxHP = Mathf.Max(1f, profile.maxHP);
+        currentHP = maxHP;
+
+        useWeaponSystem = profile.useWeaponSystem;
+        allowWeaponDrop = profile.allowWeaponDrop;
+        weaponDropChance = profile.weaponDropChance;
+
+        if (profile.availableWeapons != null && profile.availableWeapons.Length > 0)
+            availableWeapons = profile.availableWeapons;
+
+        RecomputeBaseColor();
+
+        if (!useWeaponSystem)
+        {
+            HideAllNpcWeapons();
+        }
+    }
+
     public void SetReactionType(NPCReactionType type)
     {
         reactionType = type;
@@ -218,7 +257,14 @@ public class NPCController : MonoBehaviour, IDamageable
         {
             if (fighterVariant == FighterVariant.Black)
             {
-                StartAggression(byHit: false); // polowanie bez czekania na FOV/LOS
+                if (PlayerInFrontAndVisible())
+                {
+                    StartAggression(byHit: false);
+                }
+                else if (blackVariantHuntsSilently)
+                {
+                    SilentBlackHuntTick();
+                }
             }
             else
             {
@@ -226,12 +272,11 @@ public class NPCController : MonoBehaviour, IDamageable
                     StartAggression(byHit: false);
             }
         }
-    
 
         // wygaszenie prowokacji (tylko nie-Fighter)
         if (isProvoked &&
             reactionType != NPCReactionType.Fighter &&
-            (Time.time > reactionEndTime || Vector3.Distance(transform.position, player.position) > 25f))
+            (Time.time > reactionEndTime || Vector3.Distance(transform.position, GetCurrentTargetPosition()) > 25f))
         {
             isProvoked = false;
             if (agent != null && agent.isOnNavMesh) agent.isStopped = false;
@@ -263,10 +308,17 @@ public class NPCController : MonoBehaviour, IDamageable
         agent = GetComponent<NavMeshAgent>();
         rootRb = GetComponent<Rigidbody>();
         cachedAnimator = GetComponentInChildren<Animator>(true);
-
+        core = GetComponent<NPCCore>();
         // bierz tylko solid collider z roota
         var cols = GetComponents<Collider>();
         rootCol = null;
+
+        if (weaponsListRoot == null)
+        {
+            Transform body = transform.Find("Body");
+            if (body != null)
+                weaponsListRoot = body.Find("WeaponsList");
+        }
 
         foreach (var c in cols)
         {
@@ -322,17 +374,21 @@ public class NPCController : MonoBehaviour, IDamageable
 
     private void Start()
     {
-        AssignRandomWeapon();
+        if (useWeaponSystem)
+            AssignRandomWeapon();
+
         RefreshBodyRenderers();
         ApplyBodyColor(defaultColor);
+
         InvokeRepeating(nameof(PickNewDestination), 5f, 10f);
 
-        // 🔥 CZARNY = AGGRESSIVE POLUJĄCY OD STARTU
         if (reactionType == NPCReactionType.Aggressive && fighterVariant == FighterVariant.Black)
         {
-            DisableInteractionOnly();   // zostaw – blokuje E tylko dla Aggressive Black
-            HolsterWeapon(false);
-            if (!isProvoked) StartAggression(byHit: false);
+            DisableInteractionOnly();
+
+            // Czarny NPC jest "łowcą", ale nie pokazuje alertu i nie wyciąga broni,
+            // dopóki faktycznie nie wejdzie w walkę.
+            HolsterWeapon(true);
             HideAllIcons();
         }
     }
@@ -468,7 +524,8 @@ public class NPCController : MonoBehaviour, IDamageable
         if (player == null) return false;
 
         Vector3 eye = transform.position + Vector3.up * 1.6f;
-        Vector3 to = (player.position + Vector3.up * 1.4f) - eye;
+        Vector3 targetPos = GetCurrentTargetPosition();
+        Vector3 to = (targetPos + Vector3.up * 1.4f) - eye;
 
         float dist = to.magnitude;
         if (dist > viewDistance) return false;
@@ -547,12 +604,13 @@ public class NPCController : MonoBehaviour, IDamageable
     private IEnumerator FlashRedCoroutine(float duration)
     {
         if (isDead) yield break;
+
         ApplyBodyColor(Color.red);
+
         yield return new WaitForSeconds(duration);
 
         if (!isDead)
         {
-            // ⬇ Coward nie wraca na żółto, tylko na kolor bazowy
             ApplyBodyColor(defaultColor);
         }
     }
@@ -561,7 +619,7 @@ public class NPCController : MonoBehaviour, IDamageable
     private void PickNewDestination()
     {
         if (isDead) return;
-        if (player != null && Vector3.Distance(transform.position, player.position) < detectionRadius) return;
+        if (player != null && Vector3.Distance(transform.position, GetCurrentTargetPosition()) < detectionRadius) return;
         if (agent == null || !agent.enabled || !agent.isOnNavMesh) return;
 
         Vector3 randomDirection = Random.insideUnitSphere * 20f; randomDirection.y = 0f;
@@ -594,11 +652,13 @@ public class NPCController : MonoBehaviour, IDamageable
     {
         isProvoked = true;
 
+        DisableInteractionOnly();
+
         ShowAlert(Color.red);
 
         if (!_playerPosInitialized && player != null)
         {
-            _lastPlayerPos = player.position;
+            _lastPlayerPos = GetCurrentTargetPosition();
             _playerPosInitialized = true;
         }
 
@@ -616,7 +676,7 @@ public class NPCController : MonoBehaviour, IDamageable
         {
             agent.isStopped = false;
             if (agent.pathPending && agent.remainingDistance > 2f)
-                FacePositionXZ(player.position);
+                FacePositionXZ(GetCurrentTargetPosition());
 
             agent.speed = 6.5f * GetWeaponSpeedMulForNPC();
             agent.speed = Mathf.Max(agent.speed, maxApproachSpeedWhenCamping * GetWeaponSpeedMulForNPC());
@@ -625,14 +685,18 @@ public class NPCController : MonoBehaviour, IDamageable
         }
 
         // 1) Obrót na gracza (wstępny)
+        // 1) Obrót na gracza (wstępny)
         float t = 0f, faceMax = 0.6f;
         while (!isDead && player != null)
         {
-            Vector3 to = player.position - transform.position; to.y = 0f;
+            Vector3 targetPos = GetCurrentTargetPosition();
+            Vector3 to = targetPos - transform.position;
+            to.y = 0f;
+
             float ang = Vector3.Angle(transform.forward, to);
             if (ang <= faceAngleThreshold) break;
 
-            FacePositionXZ(player.position);
+            FacePositionXZ(GetCurrentTargetPosition());
             if (agent != null && agent.enabled && agent.isOnNavMesh) agent.isStopped = true;
             t += Time.deltaTime;
             if (t >= faceMax) break;
@@ -649,7 +713,7 @@ public class NPCController : MonoBehaviour, IDamageable
             float a = 0f;
             while (a < aimDelay && !isDead)
             {
-                FacePositionXZ(player.position);
+                FacePositionXZ(GetCurrentTargetPosition());
                 a += Time.deltaTime;
                 yield return null;
             }
@@ -665,7 +729,7 @@ public class NPCController : MonoBehaviour, IDamageable
         // ——— lokals: przewidzenie punktu celowania + kierunek z lufy ———
         (Vector3 aimPos, Vector3 dir) PredictAim()
         {
-            Vector3 curPos = player.position;
+            Vector3 curPos = GetCurrentTargetPosition();
             Vector3 playerVel = _playerPosInitialized
                 ? (curPos - _lastPlayerPos) / Mathf.Max(Time.deltaTime, 0.0001f)
                 : Vector3.zero;
@@ -673,11 +737,14 @@ public class NPCController : MonoBehaviour, IDamageable
             _lastPlayerPos = curPos;
             _playerPosInitialized = true;
 
-            Vector3 muzzle = (equippedGun && equippedGun.firePoint)
-                ? equippedGun.firePoint.position
+            Vector3 muzzle = (equippedGun != null && equippedGun.FirePoint != null)
+                ? equippedGun.FirePoint.position
                 : transform.position + Vector3.up * 1.4f;
 
-            float bulletSpeed = (equippedGun != null) ? Mathf.Max(1f, equippedGun.GetBulletSpeed()) : 60f;
+            float bulletSpeed = equippedGun != null
+                ? Mathf.Max(1f, equippedGun.BulletSpeed)
+                : 60f;
+
             Vector3 toTarget = (curPos + Vector3.up * 1.4f) - muzzle;
             float timeToHit = Mathf.Max(0.0f, toTarget.magnitude / Mathf.Max(1f, bulletSpeed));
 
@@ -690,7 +757,7 @@ public class NPCController : MonoBehaviour, IDamageable
         {
             // ——— stan pionowy ———
             bool verticalTooBig = VerticalGapTooLarge();
-            float horizDist = HorizontalDistance(transform.position, player.position);
+            float horizDist = HorizontalDistance(transform.position, GetCurrentTargetPosition());
 
             // Czy powinniśmy „czaić się” pod graczem?
             bool foundUnder;
@@ -745,14 +812,14 @@ public class NPCController : MonoBehaviour, IDamageable
 
                         var pred = PredictAim();
                         FacePositionXZ(pred.aimPos);
-                        agent.SetDestination(player.position); // idź bliżej
+                        agent.SetDestination(GetCurrentTargetPosition()); // idź bliżej
                         yield return null;
                         continue;
                     }
 
                     if (horizDist < (minShootingDistance + retreatBuffer))
                     {
-                        Vector3 back = (transform.position - player.position);
+                        Vector3 back = (transform.position - GetCurrentTargetPosition());
                         back.y = 0f;
                         if (back.sqrMagnitude > 0.0001f)
                         {
@@ -790,36 +857,59 @@ public class NPCController : MonoBehaviour, IDamageable
             if (!allowFire)
             {
                 // spróbuj mimo różnicy: jeśli ray z lufy do celu nie trafia w świat – pozwól
-                Vector3 muzzle = (equippedGun && equippedGun.firePoint) ? equippedGun.firePoint.position : transform.position + Vector3.up * 1.4f;
-                Vector3 toTarget = (player.position + Vector3.up * 1.4f) - muzzle;
+                Vector3 muzzle = (equippedGun != null && equippedGun.FirePoint != null)
+                    ? equippedGun.FirePoint.position
+                    : transform.position + Vector3.up * 1.4f;
+
+                Vector3 toTarget = (GetCurrentTargetPosition() + Vector3.up * 1.4f) - muzzle;
                 float dist = toTarget.magnitude;
+
                 if (!Physics.Raycast(muzzle, toTarget.normalized, dist, losObstaclesMask, QueryTriggerInteraction.Ignore))
                     allowFire = true;
             }
 
             if (equippedGun != null && allowFire)
             {
-                for (int i = 0; i < shotsPerBurst; i++)
+                if (equippedGun == null)
                 {
-                    if (!isProvoked || isDead || player == null || playerStats == null || playerStats.IsDead) break;
+                    Debug.LogWarning($"[NPC] {name}: Cannot fire, equippedGun is NULL.");
+                }
+                else if (!allowFire)
+                {
+                    Debug.Log($"[NPC] {name}: Cannot fire, allowFire=false. Vertical/LOS issue.");
+                }
 
-                    float dNow = HorizontalDistance(transform.position, player.position);
-                    if (dNow > shootDist + 0.75f || dNow < (minShootingDistance + retreatBuffer))
-                        break;
-
-                    var pred = PredictAim();
-                    FacePositionXZ(pred.aimPos);
-                    equippedGun.TryNPCFire(gameObject, pred.dir);
-
-                    float wait = equippedGun.GetFireRate();
-                    float tWait = 0f;
-                    while (tWait < wait)
+                else
+                {
+                    for (int i = 0; i < shotsPerBurst; i++)
                     {
-                        if (!isProvoked || isDead || player == null || playerStats == null || playerStats.IsDead) break;
-                        var pred2 = PredictAim();
-                        FacePositionXZ(pred2.aimPos);
-                        tWait += Time.deltaTime;
-                        yield return null;
+                        if (!isProvoked || isDead || player == null || playerStats == null || playerStats.IsDead)
+                            break;
+
+                        float dNow = HorizontalDistance(transform.position, GetCurrentTargetPosition());
+
+                        if (dNow > shootDist + 0.75f || dNow < (minShootingDistance + retreatBuffer))
+                            break;
+
+                        var pred = PredictAim();
+                        FacePositionXZ(pred.aimPos);
+
+                        equippedGun.TryFire(gameObject, pred.dir);
+
+                        float wait = Mathf.Max(0.05f, equippedGun.FireRate);
+                        float tWait = 0f;
+
+                        while (tWait < wait)
+                        {
+                            if (!isProvoked || isDead || player == null || playerStats == null || playerStats.IsDead)
+                                break;
+
+                            var pred2 = PredictAim();
+                            FacePositionXZ(pred2.aimPos);
+
+                            tWait += Time.deltaTime;
+                            yield return null;
+                        }
                     }
                 }
             }
@@ -837,7 +927,6 @@ public class NPCController : MonoBehaviour, IDamageable
                 }
             }
         }
-
 
         // koniec sekwencji (utrata celu/uspokojenie)
         HolsterWeapon(true);
@@ -857,7 +946,7 @@ public class NPCController : MonoBehaviour, IDamageable
         if (attackCoroutine != null) { StopCoroutine(attackCoroutine); attackCoroutine = null; }
         StopAllCoroutines();
 
-        Vector3 corpsePos = player ? player.position : transform.position;
+        Vector3 corpsePos = player ? GetCurrentTargetPosition() : transform.position;
         bool iAmKiller = !string.IsNullOrEmpty(killer) && killer == name;
 
         if (iAmKiller)
@@ -885,7 +974,7 @@ public class NPCController : MonoBehaviour, IDamageable
     private bool VerticalGapTooLarge()
     {
         if (player == null) return false;
-        return Mathf.Abs(player.position.y - transform.position.y) > verticalAimTolerance;
+        return Mathf.Abs(GetCurrentTargetPosition().y - transform.position.y) > verticalAimTolerance;
     }
 
     // Znajdź punkt navmesh „pod” graczem (XZ gracza, Y z NavMesh).
@@ -895,7 +984,7 @@ public class NPCController : MonoBehaviour, IDamageable
         found = false;
         if (player == null) return transform.position;
 
-        Vector3 xz = new Vector3(player.position.x, player.position.y, player.position.z);
+        Vector3 xz = new Vector3(GetCurrentTargetPosition().x, GetCurrentTargetPosition().y, GetCurrentTargetPosition().z);
         // przycięcie Y – próbujemy znaleźć dowolny punkt na NavMesh wokół XZ gracza
         if (NavMesh.SamplePosition(xz, out NavMeshHit hit, searchRadius, NavMesh.AllAreas))
         {
@@ -986,26 +1075,30 @@ public class NPCController : MonoBehaviour, IDamageable
     // NPCController.cs  (DODAJ w klasie)
     private float GetWeaponSpeedMulForNPC()
     {
-        if (!equippedGun || !equippedGun.weaponData) return 1f;
-        var wid = equippedGun.weaponData;
-        // bierzemy te same pola co u gracza; jeśli niewypełnione → domyślka z kategorii
-        float moveMul = Mathf.Approximately(wid.moveSpeedMultiplier, 1f) ? -1f : wid.moveSpeedMultiplier;
-        if (moveMul < 0f) moveMul = wid.GetDefaultLoad().moveMul;
+        if (equippedGun == null || equippedGun.WeaponData == null)
+            return 1f;
 
-        // NPC nie mają staminy – interesuje nas tylko prędkość
+        var wid = equippedGun.WeaponData;
+
+        float moveMul = Mathf.Approximately(wid.moveSpeedMultiplier, 1f)
+            ? -1f
+            : wid.moveSpeedMultiplier;
+
+        if (moveMul < 0f)
+            moveMul = wid.GetDefaultLoad().moveMul;
+
         return Mathf.Clamp(moveMul, 0.5f, 1.2f);
     }
 
     private void HolsterWeapon(bool holster)
     {
+        if (!useWeaponSystem) return;
         if (equippedGun == null) return;
 
-        var root = equippedGun.transform.parent
-            ? equippedGun.transform.parent.gameObject
-            : equippedGun.gameObject;
+        GameObject weaponRoot = GetNpcWeaponRoot(equippedGun);
 
-        if (root != null)
-            root.SetActive(!holster);
+        if (weaponRoot != null)
+            weaponRoot.SetActive(!holster);
     }
 
     // ===== DAMAGE / DEATH =====
@@ -1015,10 +1108,45 @@ public class NPCController : MonoBehaviour, IDamageable
 
         lastAttacker = string.IsNullOrEmpty(attacker) ? "Unknown" : attacker;
 
-        currentHP -= damage;
-        if (currentHP < 0f) currentHP = 0f;
+        bool preventedDeath = false;
+        bool shouldDie = false;
 
-        if (flashCoroutine != null) StopCoroutine(flashCoroutine);
+        // =========================
+        // 1. HP / DAMAGE LOGIC
+        // =========================
+        if (core != null)
+        {
+            var result = core.TryTakeDamage(damage, lastAttacker);
+
+            if (result.blocked)
+            {
+                // NPC jest odporny albo damage = 0.
+                // Na razie bez efektów, żeby np. StoryCritical nie flashował od każdego trafienia.
+                return;
+            }
+
+            // Synchronizacja starego HP z nowym NPCCore,
+            // żeby reszta starego NPCController dalej działała.
+            currentHP = result.currentHP;
+
+            preventedDeath = result.preventedDeath;
+            shouldDie = result.wouldDie;
+        }
+        else
+        {
+            // Fallback dla starych NPC bez NPCCore.
+            currentHP -= damage;
+            if (currentHP < 0f) currentHP = 0f;
+
+            shouldDie = currentHP <= 0f;
+        }
+
+        // =========================
+        // 2. HIT FEEDBACK
+        // =========================
+        if (flashCoroutine != null)
+            StopCoroutine(flashCoroutine);
+
         flashCoroutine = StartCoroutine(FlashRedCoroutine(hitFlashDuration));
 
         HitFeedbackUtility.PlayHitFx(
@@ -1034,21 +1162,59 @@ public class NPCController : MonoBehaviour, IDamageable
 
         SpawnBloodOnGround(transform.position);
 
-        if (currentHP <= 0)
+        // =========================
+        // 3. PREVENT DEATH
+        // =========================
+        if (preventedDeath)
+        {
+            // NPC dostał obrażenia, ale NPCCore nie pozwala mu umrzeć.
+            // Zostaje na 1 HP i może reagować normalnie.
+            currentHP = Mathf.Max(1f, currentHP);
+
+            if (reactionType == NPCReactionType.Coward)
+            {
+                if (propagatePanicToWitnesses) PropagateCowardPanic();
+                propagatePanicToWitnesses = false;
+
+                lastKnownAttackerPos = player ? GetCurrentTargetPosition() : transform.position + transform.forward;
+                DisableInteractionAndCollisionForever();
+                StartCowardFlee();
+
+                ShowScared(new Color(1f, 0.85f, 0.2f));
+            }
+            else if (!isProvoked)
+            {
+                StartAggression(byHit: true);
+            }
+
+            return;
+        }
+
+        // =========================
+        // 4. DEATH
+        // =========================
+        if (shouldDie || currentHP <= 0f)
         {
             currentHP = 0f;
+
+            // Przy mocnym damage od granatu coroutine flash może zostać szybko zatrzymana przez Die(),
+            // więc ustawiamy czerwony kolor od razu.
+            ApplyBodyColor(Color.red);
 
             // pozwól flash/blood FX wejść w tę klatkę
             StartCoroutine(CoDieAfterHitFrame());
             return;
         }
 
+        // =========================
+        // 5. SURVIVED HIT REACTION
+        // =========================
         if (reactionType == NPCReactionType.Coward)
         {
             if (propagatePanicToWitnesses) PropagateCowardPanic();
             propagatePanicToWitnesses = false;
 
-            lastKnownAttackerPos = player ? player.position : transform.position + transform.forward;
+            lastKnownAttackerPos = player ? GetCurrentTargetPosition() : transform.position + transform.forward;
             DisableInteractionAndCollisionForever();
             StartCowardFlee();
 
@@ -1087,15 +1253,22 @@ public class NPCController : MonoBehaviour, IDamageable
         }
     }
 
-    // ADD ▼ — start ucieczki Cowarda
     private void StartCowardFlee()
     {
         if (isFleeing) return;
         isFleeing = true;
 
-        isProvoked = true; // żeby Update() nie rozbroił stanu
-        if (attackCoroutine != null) { StopCoroutine(attackCoroutine); attackCoroutine = null; }
-        if (flashCoroutine != null) { StopCoroutine(flashCoroutine); flashCoroutine = null; }
+        isProvoked = true;
+
+        if (attackCoroutine != null)
+        {
+            StopCoroutine(attackCoroutine);
+            attackCoroutine = null;
+        }
+
+        // NIE zatrzymuj flashCoroutine tutaj.
+        // Hit flash musi mieć czas się pokazać.
+
         StartCoroutine(CowardFleeRoutine());
     }
 
@@ -1105,7 +1278,7 @@ public class NPCController : MonoBehaviour, IDamageable
         float t0 = Time.time;
 
         // pędź w stronę od gracza
-        Vector3 dir = (transform.position - (player ? player.position : transform.position)).normalized;
+        Vector3 dir = (transform.position - (player ? GetCurrentTargetPosition() : transform.position)).normalized;
         if (dir.sqrMagnitude < 0.01f) dir = -transform.forward;
 
         // pierwszy cel ucieczki
@@ -1126,7 +1299,7 @@ public class NPCController : MonoBehaviour, IDamageable
             if (agent != null && agent.isOnNavMesh && !agent.pathPending && agent.remainingDistance < 0.8f)
             {
                 // wybierz kolejny punkt jeszcze dalej
-                Vector3 away = (transform.position - (player ? player.position : transform.position)).normalized;
+                Vector3 away = (transform.position - (player ? GetCurrentTargetPosition() : transform.position)).normalized;
                 Vector3 t2 = transform.position + away * (fleeFarDistance * 0.6f + Random.Range(3f, 6f));
                 if (NavMesh.SamplePosition(t2, out NavMeshHit h2, 3f, NavMesh.AllAreas))
                     agent.SetDestination(h2.position);
@@ -1189,6 +1362,11 @@ public class NPCController : MonoBehaviour, IDamageable
         if (isDead) return;
         isDead = true;
         Debug.Log($"DIE CALLED -> {name}");
+
+        if (core != null)
+        {
+            core.ConfirmDeath(lastAttacker);
+        }
 
         HideAllIcons();
 
@@ -1269,7 +1447,7 @@ public class NPCController : MonoBehaviour, IDamageable
 
         if (pendingBackstabFall && rootRb != null)
         {
-            Vector3 awayFromAttacker = transform.position - (player ? player.position : transform.position - transform.forward);
+            Vector3 awayFromAttacker = transform.position - (player ? GetCurrentTargetPosition() : transform.position - transform.forward);
             awayFromAttacker.y = 0f;
 
             if (awayFromAttacker.sqrMagnitude < 0.001f)
@@ -1321,45 +1499,64 @@ public class NPCController : MonoBehaviour, IDamageable
 
     private bool ShouldDropWeapon()
     {
+        if (!useWeaponSystem) return false;
+        if (!allowWeaponDrop) return false;
         if (equippedGun == null) return false;
         if (reactionType != NPCReactionType.Aggressive && reactionType != NPCReactionType.Fighter) return false;
+
         return Random.value < (weaponDropChance / 100f);
     }
 
     private void RefreshBodyRenderers()
     {
-        var all = GetComponentsInChildren<Renderer>(true);
-        var filtered = new List<Renderer>(all.Length);
+        Renderer[] all = GetComponentsInChildren<Renderer>(true);
+        List<Renderer> filtered = new List<Renderer>(all.Length);
 
-        foreach (var r in all)
+        int weaponLayer = LayerMask.NameToLayer("Weapon");
+
+        foreach (Renderer r in all)
         {
-            if (r == null) continue;
+            if (r == null)
+                continue;
 
-            // ⬇⬇⬇ DODAJ: nie koloruj obiektu Alert (ani nic pod nim)
-            if (alertIcon != null)
+            // Nie koloruj ikony Alert ani jej dzieci.
+            if (alertIcon != null &&
+                (r.transform == alertIcon.transform || r.transform.IsChildOf(alertIcon.transform)))
             {
-                if (r.transform == alertIcon.transform || r.transform.IsChildOf(alertIcon.transform))
-                    continue;
+                continue;
             }
 
-            // nie koloruj obiektu Alert ani Scared (ani ich dzieci)
-            if (alertIcon && (r.transform == alertIcon.transform || r.transform.IsChildOf(alertIcon.transform)))
+            // Nie koloruj ikony Scared ani jej dzieci.
+            if (scaredIcon != null &&
+                (r.transform == scaredIcon.transform || r.transform.IsChildOf(scaredIcon.transform)))
+            {
                 continue;
-            if (scaredIcon && (r.transform == scaredIcon.transform || r.transform.IsChildOf(scaredIcon.transform)))
-                continue;
+            }
 
-            bool underWeaponMount = (weaponMountPoint != null && r.transform.IsChildOf(weaponMountPoint));
-            bool underGun = r.GetComponentInParent<Gun>(true) != null;
-            bool isWeaponLayer = r.gameObject.layer == LayerMask.NameToLayer("Weapon");
-
-            if (underWeaponMount || underGun || isWeaponLayer)
+            // Nie koloruj żadnej broni z WeaponsList.
+            if (weaponsListRoot != null && r.transform.IsChildOf(weaponsListRoot))
+            {
                 continue;
+            }
+
+            // Nie koloruj obiektów, które są częścią NPCGun.
+            if (r.GetComponentInParent<NPCGun>(true) != null)
+            {
+                continue;
+            }
+
+            // Dodatkowy bezpiecznik, jeśli bronie mają layer Weapon.
+            if (weaponLayer >= 0 && r.gameObject.layer == weaponLayer)
+            {
+                continue;
+            }
 
             filtered.Add(r);
         }
 
         bodyRenderers = filtered.ToArray();
     }
+
 
     private IEnumerator DespawnAfterSeconds(float seconds)
     {
@@ -1370,39 +1567,36 @@ public class NPCController : MonoBehaviour, IDamageable
     // ===== BROŃ =====
     private void AssignRandomWeapon()
     {
-        if (availableWeapons == null || availableWeapons.Length == 0 || weaponMountPoint == null)
+        if (!useWeaponSystem)
+            return;
+
+        if (availableWeapons == null || availableWeapons.Length == 0)
         {
-            Debug.LogWarning("[NPC] Brak dostępnych broni lub mount pointu.");
+            Debug.LogWarning($"[NPC] {name}: Brak dostępnych broni NPC.");
             return;
         }
 
-        var gunComponent = availableWeapons[Random.Range(0, availableWeapons.Length)];
-        if (gunComponent == null) return;
+        HideAllNpcWeapons();
 
-        var weaponRoot = gunComponent.transform.parent ? gunComponent.transform.parent.gameObject : gunComponent.gameObject;
+        NPCGun gunComponent = availableWeapons[Random.Range(0, availableWeapons.Length)];
 
-        weaponRoot.transform.SetParent(weaponMountPoint, false);
-        weaponRoot.transform.localPosition = Vector3.zero;
-        weaponRoot.transform.localRotation = Quaternion.identity;
-        weaponRoot.transform.localScale = Vector3.one;
-
-        equippedGun = weaponRoot.GetComponentInChildren<Gun>(true);
-        if (equippedGun == null)
+        if (gunComponent == null)
         {
-            Debug.LogWarning("[NPC] Nie znaleziono komponentu Gun po przypięciu.");
+            Debug.LogWarning($"[NPC] {name}: Wylosowana broń NPC jest null.");
             return;
         }
 
-        equippedGun.isControlledByNPC = true;
-        if (equippedGun.weaponData != null)
-            equippedGun.SetAmmo(equippedGun.weaponData.magazineSize, 60);
-        else
-            equippedGun.SetAmmo(30, 60);
+        equippedGun = gunComponent;
 
-        // ZAWSZE chowamy broń do czasu ataku
-        weaponRoot.SetActive(false);
+        GameObject weaponRoot = GetNpcWeaponRoot(equippedGun);
+
+        if (weaponRoot != null)
+            weaponRoot.SetActive(false);
 
         assignedWeaponName = equippedGun.name;
+
+        Debug.Log($"[NPC] {name}: Assigned NPC weapon = {assignedWeaponName}, root = {weaponRoot?.name}");
+
         RefreshBodyRenderers();
     }
 
@@ -1411,17 +1605,14 @@ public class NPCController : MonoBehaviour, IDamageable
         if (equippedGun == null) return null;
 
         string gunName = equippedGun.name ?? "";
-        string rootName = equippedGun.transform.parent ? equippedGun.transform.parent.name : gunName;
-
         gunName = gunName.Replace("(Clone)", "");
-        rootName = rootName.Replace("(Clone)", "");
 
-        if (gunName.Contains("Glock") || rootName.Contains("Glock")) return GlockPickup;
-        if (gunName.Contains("M4A1") || rootName.Contains("M4A1")) return M4A1Pickup;
-        if (gunName.Contains("AK97") || rootName.Contains("AK97")) return AK97Pickup;
-        if (gunName.Contains("SPAS12") || rootName.Contains("SPAS12")) return SPAS12Pickup;
+        if (gunName.Contains("Glock")) return GlockPickup;
+        if (gunName.Contains("M4A1")) return M4A1Pickup;
+        if (gunName.Contains("AK97")) return AK97Pickup;
+        if (gunName.Contains("SPAS12")) return SPAS12Pickup;
 
-        Debug.Log($"[NPC] {name} pickupPrefab=null (gun='{gunName}', root='{rootName}')");
+        Debug.Log($"[NPC] {name} pickupPrefab=null, gun='{gunName}'");
         return null;
     }
 
@@ -1430,15 +1621,18 @@ public class NPCController : MonoBehaviour, IDamageable
     private void PropagateCowardPanic()
     {
         var nearby = Physics.OverlapSphere(transform.position, panicPropagationRadius);
+
         foreach (var col in nearby)
         {
-            if (!col.TryGetComponent(out NPCController npc)) continue;
+            if (col == null) continue;
+
+            NPCController npc = col.GetComponentInParent<NPCController>();
+            if (npc == null) continue;
             if (npc == this || npc.isDead) continue;
 
             if (npc.reactionType == NPCReactionType.Coward)
             {
-                // ŚWIADEK: permanentny brak interakcji/kolizji + ucieczka
-                npc.ReceivePanicFromWitness(player ? player.position : transform.position);
+                npc.ReceivePanicFromWitness(player ? GetCurrentTargetPosition() : transform.position);
             }
         }
     }
@@ -1569,12 +1763,62 @@ public class NPCController : MonoBehaviour, IDamageable
     public void TakeBackstabKill(string attackerName = "Player (Melee Backstab)")
     {
         if (isDead || deathSequenceStarted) return;
+
+        lastAttacker = string.IsNullOrEmpty(attackerName) ? "Player (Melee Backstab)" : attackerName;
+
+        if (core != null)
+        {
+            // Backstab traktujemy jako bardzo duże obrażenia,
+            // ale dalej pozwalamy NPCCore zdecydować, czy NPC może umrzeć.
+            var result = core.TryTakeDamage(99999f, lastAttacker);
+
+            if (result.blocked)
+                return;
+
+            currentHP = result.currentHP;
+
+            if (result.preventedDeath)
+            {
+                currentHP = Mathf.Max(1f, currentHP);
+
+                if (flashCoroutine != null)
+                    StopCoroutine(flashCoroutine);
+
+                flashCoroutine = StartCoroutine(FlashRedCoroutine(hitFlashDuration));
+
+                HitFeedbackUtility.PlayHitFx(
+                    transform,
+                    bloodFxPrefab,
+                    hurtSfx,
+                    hitPointWorld: null,
+                    hitNormalWorld: null,
+                    bloodFxScale,
+                    bloodFxLifetime,
+                    audioSource
+                );
+
+                SpawnBloodOnGround(transform.position);
+
+                if (!isProvoked)
+                    StartAggression(byHit: true);
+
+                return;
+            }
+
+            if (!result.wouldDie)
+                return;
+        }
+        else
+        {
+            currentHP = 0f;
+        }
+
         deathSequenceStarted = true;
 
         Debug.Log($"BACKSTAB KILL EXECUTED -> {name}");
 
-        lastAttacker = attackerName;
         currentHP = 0f;
+
         pendingBackstabFall = true;
 
         if (flashCoroutine != null) StopCoroutine(flashCoroutine);
@@ -1602,10 +1846,41 @@ public class NPCController : MonoBehaviour, IDamageable
 
         lastAttacker = string.IsNullOrEmpty(attackerName) ? "Unknown" : attackerName;
 
-        currentHP -= Mathf.Max(0, damage);
-        if (currentHP < 0f) currentHP = 0f;
+        bool preventedDeath = false;
+        bool shouldDie = false;
 
-        if (flashCoroutine != null) StopCoroutine(flashCoroutine);
+        // =========================
+        // 1. HP / DAMAGE LOGIC przez NPCCore
+        // =========================
+        if (core != null)
+        {
+            var result = core.TryTakeDamage(damage, lastAttacker);
+
+            if (result.blocked)
+            {
+                // NPC odporny, martwy albo damage = 0.
+                return;
+            }
+
+            currentHP = result.currentHP;
+            preventedDeath = result.preventedDeath;
+            shouldDie = result.wouldDie;
+        }
+        else
+        {
+            // Fallback dla starych NPC bez NPCCore.
+            currentHP -= Mathf.Max(0, damage);
+            if (currentHP < 0f) currentHP = 0f;
+
+            shouldDie = currentHP <= 0f;
+        }
+
+        // =========================
+        // 2. HIT FEEDBACK
+        // =========================
+        if (flashCoroutine != null)
+            StopCoroutine(flashCoroutine);
+
         flashCoroutine = StartCoroutine(FlashRedCoroutine(hitFlashDuration));
 
         HitFeedbackUtility.PlayHitFx(
@@ -1621,19 +1896,56 @@ public class NPCController : MonoBehaviour, IDamageable
 
         SpawnBloodOnGround(transform.position);
 
-        if (currentHP <= 0f)
+        // =========================
+        // 3. PREVENT DEATH
+        // =========================
+        if (preventedDeath)
         {
+            currentHP = Mathf.Max(1f, currentHP);
+
+            if (reactionType == NPCReactionType.Coward)
+            {
+                if (propagatePanicToWitnesses) PropagateCowardPanic();
+                propagatePanicToWitnesses = false;
+
+                lastKnownAttackerPos = player ? GetCurrentTargetPosition() : transform.position + transform.forward;
+                DisableInteractionAndCollisionForever();
+                StartCowardFlee();
+                ShowScared(new Color(1f, 0.85f, 0.2f));
+            }
+            else if (!isProvoked)
+            {
+                StartAggression(byHit: true);
+            }
+
+            return;
+        }
+
+        // =========================
+        // 4. DEATH
+        // =========================
+        if (shouldDie || currentHP <= 0f)
+        {
+            currentHP = 0f;
+
             pendingMeleeFall = true;
             pendingMeleeAttackerPos = attackerPos;
+
+            ApplyBodyColor(Color.red);
+
             StartCoroutine(CoDieAfterHitFrame());
             return;
         }
 
+        // =========================
+        // 5. SURVIVED HIT REACTION
+        // =========================
         if (reactionType == NPCReactionType.Coward)
         {
             if (propagatePanicToWitnesses) PropagateCowardPanic();
             propagatePanicToWitnesses = false;
-            lastKnownAttackerPos = player ? player.position : transform.position + transform.forward;
+
+            lastKnownAttackerPos = player ? GetCurrentTargetPosition() : transform.position + transform.forward;
             DisableInteractionAndCollisionForever();
             StartCowardFlee();
             ShowScared(new Color(1f, 0.85f, 0.2f));
@@ -1643,6 +1955,7 @@ public class NPCController : MonoBehaviour, IDamageable
             StartAggression(byHit: true);
         }
     }
+
     private IEnumerator CoBackstabDeath()
     {
         yield return null;
@@ -1668,5 +1981,65 @@ public class NPCController : MonoBehaviour, IDamageable
             }
         }
     }
+    private Vector3 GetCurrentTargetPosition()
+    {
+        return NPCPlayerTargetUtility.GetTargetPosition(player);
+    }
 
+    private void SilentBlackHuntTick()
+    {
+        if (isDead || player == null)
+            return;
+
+        if (agent == null || !agent.enabled || !agent.isOnNavMesh)
+            return;
+
+        HideAllIcons();
+        HolsterWeapon(true);
+
+        agent.isStopped = false;
+        agent.speed = blackHuntSpeed;
+
+        if (Time.time < _nextBlackHuntRepath)
+            return;
+
+        _nextBlackHuntRepath = Time.time + blackHuntRepathInterval;
+
+        Vector3 targetPos = GetCurrentTargetPosition();
+
+        if (NavMesh.SamplePosition(targetPos, out NavMeshHit hit, 6f, NavMesh.AllAreas))
+            agent.SetDestination(hit.position);
+        else
+            agent.SetDestination(targetPos);
+    }
+
+    private GameObject GetNpcWeaponRoot(NPCGun gun)
+    {
+        if (gun == null)
+            return null;
+
+        // NPCGun jest na WeaponLogic, więc rootem broni jest parent:
+        // AK97_NPC / Glock_NPC / M4A1_NPC / SPAS12_NPC
+        if (gun.transform.parent != null)
+            return gun.transform.parent.gameObject;
+
+        return gun.gameObject;
+    }
+
+    private void HideAllNpcWeapons()
+    {
+        if (availableWeapons == null)
+            return;
+
+        foreach (NPCGun gun in availableWeapons)
+        {
+            if (gun == null)
+                continue;
+
+            GameObject root = GetNpcWeaponRoot(gun);
+
+            if (root != null)
+                root.SetActive(false);
+        }
+    }
 }

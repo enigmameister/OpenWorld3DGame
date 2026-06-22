@@ -57,10 +57,19 @@ public class NPCMelee : MonoBehaviour, IDamageable
     public float backoffSpeed = 3.5f;
     public float holdJitter = 0.2f;
 
-    private Rigidbody _rootRb;
-    private Collider _rootCol;
+    [Header("Alert visibility")]
+    [SerializeField] private float alertForgetDistance = 28f;
+    [SerializeField] private float alertLoseSightDelay = 3f;
+    [SerializeField] private float alertRefreshRate = 0.2f;
+
+    private float _lastAlertSeenTime = -999f;
+    private float _nextAlertCheckTime = 0f;
 
     // runtime
+    private Rigidbody _rootRb;
+    private Collider _rootCol;
+    private NPCCore core;
+
     private int _hp;
     private Transform _player;
     private PlayerStats _playerStats;
@@ -95,8 +104,15 @@ public class NPCMelee : MonoBehaviour, IDamageable
     public float enragedBackoffSpeed = 4.5f;
     private bool _enraged = false;
 
+    public bool IsDead => _isDead;
+    public bool IsAggro => _aggro;
+
+    public static event System.Action<NPCMelee, string> OnMeleeNPCDied;
+
     private void Awake()
     {
+        core = GetComponent<NPCCore>();
+
         _agent = GetComponent<NavMeshAgent>();
         _rootRb = GetComponent<Rigidbody>();
         _rootCol = GetComponent<Collider>();
@@ -136,9 +152,9 @@ public class NPCMelee : MonoBehaviour, IDamageable
             else visualRoot = transform; // awaryjnie obracaj cały root
         }
     }
-
     private void Start()
     {
+        HideAlert();
         Invoke(nameof(PatrolPickNewPoint), Random.Range(0.5f, 1.5f));
     }
 
@@ -158,6 +174,7 @@ public class NPCMelee : MonoBehaviour, IDamageable
     private void Update()
     {
         if (_isDead || _player == null) return;
+        UpdateAlertVisibility();
 
         // ---- IDLE / PATROL ----
         if (!_aggro && _agent != null && _agent.enabled && _agent.isOnNavMesh)
@@ -172,18 +189,25 @@ public class NPCMelee : MonoBehaviour, IDamageable
             else
             {
                 // gdy stoi i gracz blisko – odwróć się do gracza
-                float d = Vector3.Distance(transform.position, _player.position);
-                if (d <= 3.0f) FaceVisualToDirection(_player.position - transform.position);
+                Vector3 targetPos = NPCPlayerTargetUtility.GetTargetPosition(_player);
+                float d = Vector3.Distance(transform.position, targetPos);
+                if (d <= 3.0f) FaceVisualToDirection(targetPos - transform.position);
             }
         }
 
         // ---- WALKA / POŚCIG ----
         if (_aggro)
         {
+            Vector3 targetPos = NPCPlayerTargetUtility.GetTargetPosition(_player);
+            Vector3 toPlayer = targetPos - transform.position;
+
+            if (Vector3.Distance(transform.position, targetPos) <= alertForgetDistance)
+                MarkPlayerAsSeenForAlert();
+
             if (_agent != null && _agent.enabled && _agent.isOnNavMesh)
                 _agent.speed = _enraged ? Mathf.Max(chaseSpeed, enragedChaseSpeed) : chaseSpeed;
 
-            Vector3 toPlayer = _player.position - transform.position;
+
             float dist = toPlayer.magnitude;
             Vector3 dir = (dist > 0.001f) ? toPlayer / dist : transform.forward;
 
@@ -193,7 +217,7 @@ public class NPCMelee : MonoBehaviour, IDamageable
             // docelowy punkt na pierścieniu
             float jitter = Random.Range(-holdJitter, holdJitter);
             float targetRadius = Mathf.Max(0.1f, holdDistance + jitter);
-            Vector3 ringPoint = _player.position - dir * targetRadius;
+            Vector3 ringPoint = targetPos - dir * targetRadius;
             if (NavMesh.SamplePosition(ringPoint, out NavMeshHit nh, 1.0f, NavMesh.AllAreas))
                 ringPoint = nh.position;
 
@@ -315,9 +339,13 @@ public class NPCMelee : MonoBehaviour, IDamageable
     {
         if (_playerStats == null || _playerStats.IsDead) return;
 
-        Vector3 to = _player.position - transform.position;
+        Vector3 targetPos = NPCPlayerTargetUtility.GetTargetPosition(_player);
+        Vector3 to = targetPos - transform.position;
+
         if (to.magnitude > attackRange + 0.25f) return;
 
+        // Na razie dalej bije PlayerStats.
+        // Później można tu zrobić osobną logikę: jeśli gracz siedzi w aucie, melee bije pojazd.
         _playerStats.TakeDamage(damagePerHit, gameObject.name);
         DamageIndicatorUI.Instance?.TriggerFromWorld(transform.position, damagePerHit);
     }
@@ -331,37 +359,124 @@ public class NPCMelee : MonoBehaviour, IDamageable
     {
         if (_isDead) return;
 
-        _hp -= Mathf.Max(0, damage);
+        bool preventedDeath = false;
+        bool shouldDie = false;
 
-        if (_flashCo != null) StopCoroutine(_flashCo);
+        // =========================
+        // 1. HP / DAMAGE LOGIC
+        // =========================
+        if (core != null)
+        {
+            var result = core.TryTakeDamage(damage, attackerName);
+
+            if (result.blocked)
+            {
+                // NPC odporny albo damage = 0.
+                return;
+            }
+
+            _hp = Mathf.RoundToInt(result.currentHP);
+
+            preventedDeath = result.preventedDeath;
+            shouldDie = result.wouldDie;
+        }
+        else
+        {
+            _hp -= Mathf.Max(0, damage);
+            shouldDie = _hp <= 0;
+        }
+
+        // =========================
+        // 2. HIT FEEDBACK
+        // =========================
+        if (_flashCo != null)
+            StopCoroutine(_flashCo);
+
         _flashCo = StartCoroutine(FlashRed(hitFlashDuration));
 
-        if (!_aggro) _aggro = true;
+        if (!_aggro)
+        {
+            EnterAggro();
+            MarkPlayerAsSeenForAlert();
+
+            var reactive = GetComponent<NPCReactive>();
+            if (reactive != null)
+                reactive.enabled = false;
+        }
+        else
+        {
+            MarkPlayerAsSeenForAlert();
+        }
+
         _enraged = true;
 
         if (_agent != null && _agent.enabled && _agent.isOnNavMesh)
             _agent.speed = Mathf.Max(chaseSpeed, enragedChaseSpeed);
 
-        HitFeedbackUtility.PlayHitFx(transform, bloodFxPrefab, hurtSfx, null, null, bloodFxScale, bloodFxLifetime, audioSource);
+        HitFeedbackUtility.PlayHitFx(
+            transform,
+            bloodFxPrefab,
+            hurtSfx,
+            null,
+            null,
+            bloodFxScale,
+            bloodFxLifetime,
+            audioSource
+        );
 
-        if (_hp <= 0)
+        // =========================
+        // 3. PREVENT DEATH
+        // =========================
+        if (preventedDeath)
         {
+            _hp = Mathf.Max(1, _hp);
+
+            // NPC przeżywa, ale dalej reaguje jak trafiony.
+            return;
+        }
+
+        // =========================
+        // 4. DEATH
+        // =========================
+        if (shouldDie || _hp <= 0)
+        {
+            _hp = 0;
+
+            // Tak samo jak w NPCController:
+            // przy natychmiastowej śmierci od eksplozji flash coroutine może nie zdążyć.
+            ApplyBodyColor(Color.red);
+
             _isDead = true;
-            if (alertIcon) alertIcon.SetActive(false);
+
+            if (core != null)
+                core.ConfirmDeath(attackerName);
+
+            OnMeleeNPCDied?.Invoke(this, attackerName);
+
+            HideAlert();
 
             var anim = GetComponentInChildren<Animator>();
+
             if (_agent != null && _agent.enabled && _agent.isOnNavMesh)
             {
                 _agent.isStopped = true;
                 _agent.ResetPath();
                 _agent.enabled = false;
             }
-            if (anim) anim.enabled = false;
 
-            var reactive = GetComponent<NPCReactive>(); if (reactive) reactive.enabled = false;
-            var billboard = GetComponent<Billboard>(); if (billboard) billboard.enabled = false;
+            if (anim)
+                anim.enabled = false;
+
+            var reactive = GetComponent<NPCReactive>();
+            if (reactive)
+                reactive.enabled = false;
+
+            var billboard = GetComponent<Billboard>();
+            if (billboard)
+                billboard.enabled = false;
 
             EnableRagdollFall();
+
             StopAllCoroutines();
             StartCoroutine(Despawn(12f));
         }
@@ -443,5 +558,119 @@ public class NPCMelee : MonoBehaviour, IDamageable
                 }
             }
         }
+    }
+    private void ShowAlert()
+    {
+        if (alertIcon != null && !alertIcon.activeSelf)
+            alertIcon.SetActive(true);
+    }
+
+    private void HideAlert()
+    {
+        if (alertIcon != null && alertIcon.activeSelf)
+            alertIcon.SetActive(false);
+    }
+
+    private void MarkPlayerAsSeenForAlert()
+    {
+        _lastAlertSeenTime = Time.time;
+        ShowAlert();
+    }
+
+    private void UpdateAlertVisibility()
+    {
+        if (!_aggro || _isDead)
+        {
+            HideAlert();
+            return;
+        }
+
+        if (_player == null)
+        {
+            HideAlert();
+            return;
+        }
+
+        if (Time.time < _nextAlertCheckTime)
+            return;
+
+        _nextAlertCheckTime = Time.time + alertRefreshRate;
+
+        Vector3 targetPos = NPCPlayerTargetUtility.GetTargetPosition(_player);
+
+        if (CanSeeTargetForAlert(targetPos))
+        {
+            MarkPlayerAsSeenForAlert();
+        }
+
+        if (Time.time - _lastAlertSeenTime > alertLoseSightDelay)
+        {
+            HideAlert();
+        }
+        else
+        {
+            ShowAlert();
+        }
+    }
+
+    private bool CanSeeTargetForAlert(Vector3 targetPos)
+    {
+        Vector3 eye = transform.position + Vector3.up * shotLOSProbeHeight;
+        Vector3 to = targetPos + Vector3.up * 1.2f - eye;
+
+        float dist = to.magnitude;
+        if (dist > alertForgetDistance)
+            return false;
+
+        Vector3 flatTo = to;
+        flatTo.y = 0f;
+
+        if (flatTo.sqrMagnitude < 0.001f)
+            return true;
+
+        Vector3 forward = visualRoot != null ? visualRoot.forward : transform.forward;
+        forward.y = 0f;
+
+        if (forward.sqrMagnitude < 0.001f)
+            forward = transform.forward;
+
+        float angle = Vector3.Angle(forward.normalized, flatTo.normalized);
+        if (angle > viewAngle * 0.5f)
+            return false;
+
+        LayerMask maskNoNPC = losMask & ~LayerMask.GetMask("NPC");
+
+        if (Physics.Raycast(eye, to.normalized, out RaycastHit hit, dist, maskNoNPC, QueryTriggerInteraction.Ignore))
+        {
+            if (!hit.collider.transform.IsChildOf(transform))
+                return false;
+        }
+
+        return true;
+    }
+
+    private void EnterAggro()
+    {
+        if (_aggro) return;
+
+        _aggro = true;
+        MarkPlayerAsSeenForAlert();
+
+        var reactive = GetComponent<NPCReactive>();
+        if (reactive != null)
+            reactive.enabled = false;
+    }
+
+    public void ApplyProfile(NPCProfile profile)
+    {
+        if (profile == null) return;
+        if (!profile.useMelee) return;
+
+        maxHP = Mathf.Max(1, profile.meleeMaxHP);
+        _hp = maxHP;
+
+        damagePerHit = Mathf.Max(1, profile.meleeDamagePerHit);
+        chaseSpeed = Mathf.Max(0.1f, profile.meleeChaseSpeed);
+        enragedChaseSpeed = Mathf.Max(chaseSpeed, profile.meleeEnragedChaseSpeed);
     }
 }

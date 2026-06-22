@@ -1,5 +1,6 @@
 ﻿using System.Linq;
 using UnityEngine;
+using UnityEngine.AI;
 
 public class NPCReactive : MonoBehaviour
 {
@@ -28,16 +29,22 @@ public class NPCReactive : MonoBehaviour
     [SerializeField] private float idleTurnSpeed = 240f;
     [SerializeField] private float returnTurnSpeed = 180f;
 
+    [Header("Smooth Turn")]
+    [SerializeField] private bool useSmoothTurn = true;
+    [SerializeField] private float interactSmoothTime = 0.12f;
+    [SerializeField] private float idleSmoothTime = 0.18f;
+    [SerializeField] private float returnSmoothTime = 0.25f;
+    [SerializeField] private float maxTurnSpeed = 720f;
+
+    private float turnVelocity;
+
     [Header("Kolory (interakcja)")]
     [SerializeField] private Color interactColor = Color.black;
     [SerializeField] private Transform bodyRoot;
-
+        
     [Header("NPC Bark UI")]
     [SerializeField] private string npcDisplayName = "NPC";
-    [TextArea][SerializeField] private string[] barkLines = { "Cześć.", "Co tam?", "Uważaj." };
-
-    [Header("Blokady interakcji")]
-    [SerializeField] private bool blockInteractionWhenProvoked = true;
+    [TextArea][SerializeField] private string[] barkLines = { "Hi", "What's up?", "Watchout!" };
 
     [Header("Wykrywanie mierzenia (Aggressive/Fighter)")]
     [SerializeField] private float aimAngleThreshold = 15f;
@@ -64,6 +71,9 @@ public class NPCReactive : MonoBehaviour
     private WeaponManager wm;
     private NPCController npcCtrl;
     private NpcBarkUI barkUI;
+    private NavMeshAgent agent;
+    private bool agentStoppedBeforeInteraction;
+    private bool agentWasSuspendedForInteraction;
 
     private Renderer[] bodyRenderers;
     private MaterialPropertyBlock mpb;
@@ -104,6 +114,7 @@ public class NPCReactive : MonoBehaviour
     private void Awake()
     {
         npcCtrl = GetComponent<NPCController>();
+        agent = GetComponent<NavMeshAgent>();
     }
 
     private void Start()
@@ -151,7 +162,10 @@ public class NPCReactive : MonoBehaviour
         if (player == null) return;
 
         if (npcCtrl != null && (npcCtrl.IsDead || npcCtrl.IsProvoked || npcCtrl.IsInteractionLocked || npcCtrl.IsScaredVisible))
+        {
             sessionActive = false;
+            ResumeAgentAfterInteraction();
+        }
 
         if (wm == null) wm = FindFirstObjectByType<WeaponManager>();
         if (wm != null)
@@ -219,6 +233,7 @@ public class NPCReactive : MonoBehaviour
                 ReturnToDefaultRotationDeg(returnTurnSpeed);
                 ApplyBodyColor(defaultColor);
                 sessionActive = false;
+                ResumeAgentAfterInteraction();
             }
         }
     }
@@ -248,13 +263,29 @@ public class NPCReactive : MonoBehaviour
     // =========================
     private bool CanInteract()
     {
+        NPCMelee melee = GetComponent<NPCMelee>();
+
+        if (melee != null)
+        {
+            if (melee.IsDead) return false;
+            if (melee.IsAggro) return false;
+        }
+
         if (npcCtrl == null) return true;
 
         if (npcCtrl.IsDead) return false;
-        if (npcCtrl.GetReactionType() == NPCController.NPCReactionType.Aggressive) return false;
-        if (blockInteractionWhenProvoked && npcCtrl.IsProvoked) return false;
+        if (npcCtrl.IsProvoked) return false;
         if (npcCtrl.IsInteractionLocked) return false;
         if (npcCtrl.IsScaredVisible) return false;
+
+        // Aggressive/Fighter nie powinien odpalać zwykłego dialogu w trakcie walki.
+        var type = npcCtrl.GetReactionType();
+
+        if (type == NPCController.NPCReactionType.Aggressive)
+            return false;
+
+        if (type == NPCController.NPCReactionType.Fighter && npcCtrl.IsProvoked)
+            return false;
 
         return true;
     }
@@ -270,9 +301,22 @@ public class NPCReactive : MonoBehaviour
     {
         if (!CanInteract()) return;
 
+        if (player == null)
+        {
+            GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
+            if (playerGo != null)
+                player = playerGo.transform;
+        }
+
+        if (player == null)
+            return;
+
         string line = GetRandomBark();
 
         sessionActive = true;
+        turnVelocity = 0f;
+        SuspendAgentForInteraction();
+
         interactFaceUntil = Time.time + interactFaceDuration;
         lastSeenTime = Time.time;
 
@@ -494,20 +538,131 @@ public class NPCReactive : MonoBehaviour
     {
         Vector3 dir = worldPos - transform.position;
         dir.y = 0f;
-        if (dir.sqrMagnitude < 0.0001f) return;
 
-        Quaternion target = Quaternion.LookRotation(dir.normalized);
-        transform.rotation = Quaternion.RotateTowards(transform.rotation, target, speedDeg * Time.deltaTime);
+        if (dir.sqrMagnitude < 0.0001f)
+            return;
+
+        Quaternion targetRot = Quaternion.LookRotation(dir.normalized);
+
+        if (!useSmoothTurn)
+        {
+            transform.rotation = Quaternion.RotateTowards(
+                transform.rotation,
+                targetRot,
+                speedDeg * Time.deltaTime
+            );
+            return;
+        }
+
+        float currentY = transform.eulerAngles.y;
+        float targetY = targetRot.eulerAngles.y;
+
+        float smoothTime = Time.time <= interactFaceUntil
+            ? interactSmoothTime
+            : idleSmoothTime;
+
+        float newY = Mathf.SmoothDampAngle(
+            currentY,
+            targetY,
+            ref turnVelocity,
+            smoothTime,
+            maxTurnSpeed,
+            Time.deltaTime
+        );
+
+        transform.rotation = Quaternion.Euler(0f, newY, 0f);
     }
 
     private void ReturnToDefaultRotationDeg(float speedDeg)
     {
-        transform.rotation = Quaternion.RotateTowards(transform.rotation, originalRotation, speedDeg * Time.deltaTime);
+        if (!useSmoothTurn)
+        {
+            transform.rotation = Quaternion.RotateTowards(
+                transform.rotation,
+                originalRotation,
+                speedDeg * Time.deltaTime
+            );
+            return;
+        }
+
+        float currentY = transform.eulerAngles.y;
+        float targetY = originalRotation.eulerAngles.y;
+
+        float newY = Mathf.SmoothDampAngle(
+            currentY,
+            targetY,
+            ref turnVelocity,
+            returnSmoothTime,
+            maxTurnSpeed,
+            Time.deltaTime
+        );
+
+        transform.rotation = Quaternion.Euler(0f, newY, 0f);
     }
 
     private LayerMask SuggestObstacleMask()
     {
         int mask = LayerMask.GetMask("Default", "Obstacle", "Car");
         return mask == 0 ? ~0 : mask;
+    }
+
+    private void SuspendAgentForInteraction()
+    {
+        if (agent == null || !agent.enabled || !agent.isOnNavMesh)
+            return;
+
+        if (agentWasSuspendedForInteraction)
+            return;
+
+        agentStoppedBeforeInteraction = agent.isStopped;
+        agent.isStopped = true;
+        agent.ResetPath();
+        agentWasSuspendedForInteraction = true;
+    }
+
+    private void ResumeAgentAfterInteraction()
+    {
+        if (agent == null || !agent.enabled || !agent.isOnNavMesh)
+            return;
+
+        if (!agentWasSuspendedForInteraction)
+            return;
+
+        agent.isStopped = agentStoppedBeforeInteraction;
+        agentWasSuspendedForInteraction = false;
+    }
+
+    public void ApplyProfile(NPCProfile profile)
+    {
+        if (profile == null)
+            return;
+
+        npcDisplayName = string.IsNullOrWhiteSpace(profile.displayName)
+            ? gameObject.name
+            : profile.displayName;
+
+        // Dla NPC bez interakcji wyłączamy auto barki.
+        if (!profile.allowReactiveInteraction)
+        {
+            barkOnTriggerEnter = false;
+            useKeyInteraction = false;
+            repeatBarkWhileNearby = false;
+        }
+
+        // Story / BankEmployee najczęściej powinny być na E, nie auto-trigger.
+        if (profile.archetype == NPCProfile.NPCArchetype.Story ||
+            profile.archetype == NPCProfile.NPCArchetype.BankEmployee)
+        {
+            useKeyInteraction = true;
+            barkOnTriggerEnter = false;
+            repeatBarkWhileNearby = false;
+        }
+
+        // Zwykły ambient może mieć automatyczny bark.
+        if (profile.archetype == NPCProfile.NPCArchetype.Civilian)
+        {
+            useKeyInteraction = false;
+            barkOnTriggerEnter = true;
+        }
     }
 }

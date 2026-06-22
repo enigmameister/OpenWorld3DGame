@@ -18,6 +18,8 @@ MonoBehaviour:
   prefab: {fileID: 1056927196312859361, guid: de79fbeaf1c87f2478231569a6a92e4c, type: 3}
   isKeyItem: 0
   keyId: 
+  stackable: 1
+  maxStack: 10
   description: Granat wybuchowy
   explosionRadius: 3.5
   explosionDelay: 2

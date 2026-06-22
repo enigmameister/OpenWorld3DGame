@@ -1,0 +1,33 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6fccc8100dec1db4c9299b25ea20762d, type: 3}
+  m_Name: NPCProfile_Melee
+  m_EditorClassIdentifier: Assembly-CSharp::NPCProfile
+  displayName: Melee
+  archetype: 4
+  importance: 0
+  maxHP: 80
+  invulnerable: 0
+  preventDeath: 0
+  useNPCController: 0
+  reactionType: 0
+  fighterVariant: 0
+  useWeaponSystem: 0
+  allowWeaponDrop: 0
+  weaponDropChance: 0
+  availableWeapons: []
+  useMelee: 1
+  meleeMaxHP: 80
+  meleeDamagePerHit: 12
+  meleeChaseSpeed: 4.2
+  meleeEnragedChaseSpeed: 6
+  allowReactiveInteraction: 1

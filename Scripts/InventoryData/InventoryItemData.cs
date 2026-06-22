@@ -12,6 +12,10 @@ public class InventoryItemData : ScriptableObject
     public bool isKeyItem; // ?? np. true dla breloczka
     public string keyId;   // np. "GateA", "RoomB"
 
+    [Header("Stacking")]
+    public bool stackable = false;
+    public int maxStack = 99;
+
     [TextArea]
     public string description;
 
