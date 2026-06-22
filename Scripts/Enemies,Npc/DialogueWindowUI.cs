@@ -72,16 +72,41 @@ public class DialogueWindowUI : MonoBehaviour
     private int topLineIndex = 0;
     private bool userLockedCurrentLineScroll = false;
 
+    private const int LayoutRefreshEveryChars = 4;
+
+    private RectTransform cachedCurrentLineTextRect;
+    private RectTransform cachedCurrentLineContentRect;
+    private RectTransform cachedCurrentLineViewportRect;
+
+    private WeaponManager cachedWeaponManager;
+
+    private readonly List<Button> pooledButtons = new();
+    private readonly List<TMP_Text> pooledButtonLabels = new();
+
     private void Awake()
     {
         if (root == null)
             root = gameObject;
 
         if (currentLineText != null)
+        {
             currentLineText.richText = true;
+            cachedCurrentLineTextRect = currentLineText.rectTransform;
+        }
+
+        if (currentLineScroll != null)
+        {
+            cachedCurrentLineContentRect = currentLineScroll.content;
+
+            cachedCurrentLineViewportRect = currentLineScroll.viewport != null
+                ? currentLineScroll.viewport
+                : currentLineScroll.GetComponent<RectTransform>();
+        }
 
         if (historyText != null)
             historyText.richText = true;
+
+        cachedWeaponManager = FindFirstObjectByType<WeaponManager>();
 
         CloseWindowImmediate();
     }
@@ -130,8 +155,7 @@ public class DialogueWindowUI : MonoBehaviour
 
     public void CloseWindow(bool unlockPlayer = true)
     {
-        if (!IsOpen)
-            return;
+        bool wasOpen = IsOpen;
 
         StopTyping();
 
@@ -145,10 +169,11 @@ public class DialogueWindowUI : MonoBehaviour
         if (unlockPlayer)
             UnlockPlayer();
 
-        Closed?.Invoke();
+        if (wasOpen)
+            Closed?.Invoke();
     }
 
-    public void CloseWindowImmediate()
+    public void CloseWindowImmediate(bool unlockPlayer = false)
     {
         StopTyping();
 
@@ -158,6 +183,9 @@ public class DialogueWindowUI : MonoBehaviour
 
         if (root != null)
             root.SetActive(false);
+
+        if (unlockPlayer)
+            UnlockPlayer();
     }
 
     public void ClearHistory()
@@ -258,7 +286,7 @@ public class DialogueWindowUI : MonoBehaviour
 
             int capturedIndex = i;
 
-            Button button = Instantiate(optionButtonPrefab, optionsRoot);
+            Button button = GetOptionButtonFromPool(visibleIndex);
             button.gameObject.SetActive(true);
 
             RectTransform rt = button.GetComponent<RectTransform>();
@@ -273,7 +301,7 @@ public class DialogueWindowUI : MonoBehaviour
                 rt.localScale = Vector3.one;
             }
 
-            TMP_Text label = button.GetComponentInChildren<TMP_Text>(true);
+            TMP_Text label = pooledButtonLabels[visibleIndex];
 
             if (label != null)
             {
@@ -285,7 +313,7 @@ public class DialogueWindowUI : MonoBehaviour
             button.onClick.RemoveAllListeners();
             button.onClick.AddListener(() => onSelected?.Invoke(capturedIndex));
 
-            spawnedButtons.Add(button);
+
             visibleIndex++;
         }
     }
@@ -338,19 +366,50 @@ public class DialogueWindowUI : MonoBehaviour
     {
         isTyping = true;
 
-        float delay = 1f / Mathf.Max(1f, charactersPerSecond);
+        int len = text?.Length ?? 0;
         Color spokenColor = GetSpokenColor(isPlayerLine);
 
-        for (int i = 0; i <= text.Length; i++)
+        float charsPerFrameAccumulator = 0f;
+        int revealed = 0;
+
+        while (revealed < len)
         {
-            if (currentLineText != null)
+            charsPerFrameAccumulator += charactersPerSecond * Time.unscaledDeltaTime;
+
+            int nextReveal = Mathf.Clamp(
+                Mathf.FloorToInt(charsPerFrameAccumulator),
+                0,
+                len
+            );
+
+            if (nextReveal > revealed)
             {
-                currentLineText.text = BuildColoredReveal(text, i, spokenColor);
-                RefreshCurrentLineContentSize();
-                UpdateCurrentLineFollowTarget(i);
+                revealed = nextReveal;
+
+                if (currentLineText != null)
+                {
+                    currentLineText.text = BuildColoredReveal(text, revealed, spokenColor);
+
+                    bool shouldRefreshLayout =
+                        revealed >= len ||
+                        revealed % LayoutRefreshEveryChars == 0;
+
+                    if (shouldRefreshLayout)
+                    {
+                        RefreshCurrentLineContentSize();
+                        UpdateCurrentLineFollowTarget(revealed);
+                    }
+                }
             }
 
-            yield return new WaitForSecondsRealtime(delay);
+            yield return null;
+        }
+
+        if (currentLineText != null)
+        {
+            currentLineText.text = BuildColoredReveal(text, len, spokenColor);
+            RefreshCurrentLineContentSize();
+            UpdateCurrentLineFollowTarget(len);
         }
 
         isTyping = false;
@@ -439,12 +498,9 @@ public class DialogueWindowUI : MonoBehaviour
         if (currentLineText == null)
             return;
 
-        RectTransform textRt = currentLineText.rectTransform;
-        RectTransform content = currentLineScroll.content;
-
-        RectTransform viewport = currentLineScroll.viewport != null
-            ? currentLineScroll.viewport
-            : currentLineScroll.GetComponent<RectTransform>();
+        RectTransform textRt = cachedCurrentLineTextRect;
+        RectTransform content = cachedCurrentLineContentRect;
+        RectTransform viewport = cachedCurrentLineViewportRect;
 
         float viewportHeight = viewport != null ? viewport.rect.height : 100f;
 
@@ -673,13 +729,14 @@ public class DialogueWindowUI : MonoBehaviour
 
     private void ClearSpawnedOptions()
     {
-        for (int i = spawnedButtons.Count - 1; i >= 0; i--)
+        for (int i = 0; i < pooledButtons.Count; i++)
         {
-            if (spawnedButtons[i] != null)
-                Destroy(spawnedButtons[i].gameObject);
-        }
+            if (pooledButtons[i] == null)
+                continue;
 
-        spawnedButtons.Clear();
+            pooledButtons[i].onClick.RemoveAllListeners();
+            pooledButtons[i].gameObject.SetActive(false);
+        }
     }
 
     private Color GetSpokenColor(bool isPlayerLine)
@@ -755,12 +812,13 @@ public class DialogueWindowUI : MonoBehaviour
 
         if (disableWeaponManagerDuringDialogue)
         {
-            WeaponManager wm = FindFirstObjectByType<WeaponManager>();
-            if (wm != null)
-                wm.enabled = false;
+            if (cachedWeaponManager == null)
+                cachedWeaponManager = FindFirstObjectByType<WeaponManager>();
+
+            if (cachedWeaponManager != null)
+                cachedWeaponManager.enabled = false;
         }
     }
-
     private void UnlockPlayer()
     {
         MouseLook.IsLookLocked = false;
@@ -770,8 +828,24 @@ public class DialogueWindowUI : MonoBehaviour
         Cursor.visible = false;
         Cursor.lockState = CursorLockMode.Locked;
 
-        WeaponManager wm = FindFirstObjectByType<WeaponManager>();
-        if (wm != null)
-            wm.enabled = true;
+        if (cachedWeaponManager == null)
+            cachedWeaponManager = FindFirstObjectByType<WeaponManager>();
+
+        if (cachedWeaponManager != null)
+            cachedWeaponManager.enabled = true;
+    }
+
+    private Button GetOptionButtonFromPool(int index)
+    {
+        while (pooledButtons.Count <= index)
+        {
+            Button button = Instantiate(optionButtonPrefab, optionsRoot);
+            button.gameObject.SetActive(false);
+
+            pooledButtons.Add(button);
+            pooledButtonLabels.Add(button.GetComponentInChildren<TMP_Text>(true));
+        }
+
+        return pooledButtons[index];
     }
 }

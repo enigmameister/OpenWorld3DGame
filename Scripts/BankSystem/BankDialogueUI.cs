@@ -64,16 +64,21 @@ public class BankDialogueUI : MonoBehaviour
     private string _sessionCitizenId = null;
     public event System.Action DialogueClosed;
 
+    private BankSystem cachedBank;
+    private PlayerStats cachedPlayerStats;
+    private AccountOperationsUI cachedAccountOperationsUI;
+    private BankAccountCreateUI cachedBankAccountCreateUI;
+    private CreditCardOperationsUI cachedCreditCardOperationsUI;
+
     void Awake()
     {
         EnsureWindow();
+        CacheBankReferences();
 
         if (window != null)
             window.CloseWindowImmediate();
 
         ShowUseIdHint(false);
-
-
     }
 
     void Update()
@@ -87,15 +92,16 @@ public class BankDialogueUI : MonoBehaviour
         if (!IsOpen)
             return;
 
+        // ESC musi być przed BankUiState.AnyUiOpen i przed confirm mode.
+        if (EscapePressedThisFrame())
+        {
+            Debug.Log("[BANK ESC] Escape pressed - closing dialogue.");
+            Close(unlockPlayer: true);
+            return;
+        }
+
         if (BankUiState.AnyUiOpen)
             return;
-
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            var accOps = FindFirstObjectByType<AccountOperationsUI>(FindObjectsInactive.Include);
-            if (accOps != null && accOps.IsOpen)
-                return;
-        }
 
         bool interactThisFrame =
             (PlayerInputHandler.Instance != null && PlayerInputHandler.Instance.InteractPressedThisFrame) ||
@@ -123,7 +129,7 @@ public class BankDialogueUI : MonoBehaviour
                     }
                     else
                     {
-                        Close();
+                        Close(unlockPlayer: true);
                     }
 
                     return;
@@ -136,7 +142,7 @@ public class BankDialogueUI : MonoBehaviour
 
                 if (!TryResolveNext("graph:Account/ACCOUNT_CHECK", out var nextGraph, out var nextNode))
                 {
-                    Close();
+                    Close(unlockPlayer: true);
                     return;
                 }
 
@@ -150,34 +156,6 @@ public class BankDialogueUI : MonoBehaviour
                 StartCoroutine(CoCreateAccountFlowAfterPayment());
                 return;
             }
-        }
-
-        if (IsAnyBankUiOpen())
-            return;
-
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            if (_graph != null)
-            {
-                if (_node != null && string.Equals(_node.id, _graph.startNodeId, System.StringComparison.OrdinalIgnoreCase))
-                {
-                    Close();
-                    return;
-                }
-
-                var start = _graph.GetNode(_graph.startNodeId);
-                if (start == null && _graph.nodes.Count > 0)
-                    start = _graph.nodes[0];
-
-                if (start != null)
-                {
-                    ClearHistory();
-                    GoToNode(start);
-                    return;
-                }
-            }
-
-            Close();
         }
     }
 
@@ -194,6 +172,8 @@ public class BankDialogueUI : MonoBehaviour
     }
     public void OpenDialogue(DialogueGraph graph, string npcDisplayName)
     {
+        CacheBankReferences();
+
         if (graph == null)
             return;
 
@@ -224,8 +204,7 @@ public class BankDialogueUI : MonoBehaviour
 
     public void Close(bool unlockPlayer)
     {
-        if (!IsOpen)
-            return;
+        bool wasOpen = IsOpen;
 
         StopTyping();
         HideOptions();
@@ -235,11 +214,20 @@ public class BankDialogueUI : MonoBehaviour
         _graph = null;
         _node = null;
         _waitingForChoice = false;
+        _confirmMode = InteractConfirmMode.None;
 
         if (window != null)
             window.CloseWindow(unlockPlayer);
 
-        DialogueClosed?.Invoke();
+        // Awaryjny fallback, bo bank ma kilka ścieżek Close(false) / Close(true).
+        // Przy normalnym wyjściu z dialogu gracz MUSI odzyskać ruch.
+        if (unlockPlayer)
+            UnlockPlayerAndCursor();
+
+        if (wasOpen)
+            DialogueClosed?.Invoke();
+
+        Debug.Log($"[BANK CLOSE] unlock={unlockPlayer}, MoveLocked={PlayerMovement.IsMovementLocked}, GameplayBlocked={PlayerInputHandler.GameplayInputBlocked}, LookLocked={MouseLook.IsLookLocked}");
     }
 
     private void UnlockPlayerAndCursor()
@@ -291,16 +279,23 @@ public class BankDialogueUI : MonoBehaviour
 
     private bool IsAnyBankUiOpen()
     {
-        var accOps = FindFirstObjectByType<AccountOperationsUI>(FindObjectsInactive.Include);
-        if (accOps != null && accOps.IsOpen) return true;
+        if (cachedAccountOperationsUI == null)
+            cachedAccountOperationsUI = FindFirstObjectByType<AccountOperationsUI>(FindObjectsInactive.Include);
 
-        var create = FindFirstObjectByType<BankAccountCreateUI>(FindObjectsInactive.Include);
-        if (create != null && create.gameObject.activeInHierarchy) return true;
+        if (cachedAccountOperationsUI != null && cachedAccountOperationsUI.IsOpen)
+            return true;
 
-        var ccOps = FindFirstObjectByType<CreditCardOperationsUI>(FindObjectsInactive.Include);
-        // jeśli możesz – dodaj tam IsOpen analogicznie
-        // if (ccOps != null && ccOps.IsOpen) return true;
-        if (ccOps != null && ccOps.gameObject.activeInHierarchy) return true;
+        if (cachedBankAccountCreateUI == null)
+            cachedBankAccountCreateUI = FindFirstObjectByType<BankAccountCreateUI>(FindObjectsInactive.Include);
+
+        if (cachedBankAccountCreateUI != null && cachedBankAccountCreateUI.gameObject.activeInHierarchy)
+            return true;
+
+        if (cachedCreditCardOperationsUI == null)
+            cachedCreditCardOperationsUI = FindFirstObjectByType<CreditCardOperationsUI>(FindObjectsInactive.Include);
+
+        if (cachedCreditCardOperationsUI != null && cachedCreditCardOperationsUI.gameObject.activeInHierarchy)
+            return true;
 
         return false;
     }
@@ -587,8 +582,10 @@ public class BankDialogueUI : MonoBehaviour
 
     private string GetCitizenId()
     {
-        var ps = FindFirstObjectByType<PlayerStats>();
-        return ps ? ps.citizenId : null;
+        if (cachedPlayerStats == null)
+            cachedPlayerStats = FindFirstObjectByType<PlayerStats>();
+
+        return cachedPlayerStats != null ? cachedPlayerStats.citizenId : null;
     }
 
     private string ExecuteDebugEvent(string evt)
@@ -1128,5 +1125,33 @@ public class BankDialogueUI : MonoBehaviour
         }
 
         return true;
+    }
+
+    private void CacheBankReferences()
+    {
+        cachedBank = BankSystem.Instance;
+
+        if (cachedPlayerStats == null)
+            cachedPlayerStats = FindFirstObjectByType<PlayerStats>();
+
+        if (cachedAccountOperationsUI == null)
+            cachedAccountOperationsUI = FindFirstObjectByType<AccountOperationsUI>(FindObjectsInactive.Include);
+
+        if (cachedBankAccountCreateUI == null)
+            cachedBankAccountCreateUI = FindFirstObjectByType<BankAccountCreateUI>(FindObjectsInactive.Include);
+
+        if (cachedCreditCardOperationsUI == null)
+            cachedCreditCardOperationsUI = FindFirstObjectByType<CreditCardOperationsUI>(FindObjectsInactive.Include);
+    }
+
+    private bool EscapePressedThisFrame()
+    {
+        bool oldInputEscape = Input.GetKeyDown(KeyCode.Escape);
+
+        bool newInputEscape =
+            Keyboard.current != null &&
+            Keyboard.current.escapeKey.wasPressedThisFrame;
+
+        return oldInputEscape || newInputEscape;
     }
 }

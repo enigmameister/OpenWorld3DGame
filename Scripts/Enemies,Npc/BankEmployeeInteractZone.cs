@@ -3,24 +3,28 @@
 public class BankEmployeeInteractZone : MonoBehaviour
 {
     [Header("Refs")]
-    public BankEmployee employee;
-    public BankDialogueUI dialogueUI;
+    [SerializeField] private BankEmployee employee;
+    [SerializeField] private BankDialogueUI dialogueUI;
 
-    private bool _playerInside;
-
-    private bool _sessionStarted;
-    private bool _dialogClosedByEsc;
-
+    [Header("Settings")]
     [SerializeField] private bool autoCloseWhenOffDuty = true;
 
     [Header("Damage / Death Lock")]
     [SerializeField] private bool blockWhenDamagedOrProvoked = true;
     [SerializeField] private bool closeDialogueWhenEmployeeUnavailable = true;
 
-    private int _playerInsideCount = 0;
+    [Header("Debug")]
+    [SerializeField] private bool debugLogs = false;
+
+    private bool playerInside;
+    private int playerInsideCount;
+
+    private bool sessionStarted;
+    private bool dialogClosedByEsc;
 
     private NPCController npcController;
     private NPCCore npcCore;
+    private DialogueGraphUI storyUi;
 
     private void Awake()
     {
@@ -39,6 +43,11 @@ public class BankEmployeeInteractZone : MonoBehaviour
         if (npcCore == null)
             npcCore = GetComponentInParent<NPCCore>();
 
+        if (dialogueUI == null)
+            dialogueUI = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
+
+        storyUi = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
+
         if (dialogueUI != null)
             dialogueUI.DialogueClosed += OnDialogueClosed;
     }
@@ -51,81 +60,61 @@ public class BankEmployeeInteractZone : MonoBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
-        if (!other.CompareTag("Player")) return;
+        if (!other.CompareTag("Player"))
+            return;
 
-        _playerInsideCount++;
+        playerInsideCount++;
 
-        if (_playerInsideCount == 1)
+        if (playerInsideCount == 1)
         {
-            _playerInside = true;
+            playerInside = true;
 
-            if (employee != null)
-                Debug.Log($"[BANK NPC] Player entered zone of {employee.EmployeeName}");
-            else
-                Debug.Log("[BANK NPC] Player entered zone, but employee is null.");
+            if (debugLogs)
+            {
+                string employeeName = employee != null ? employee.EmployeeName : "NULL";
+                Debug.Log($"[BANK NPC] Player entered zone of {employeeName}");
+            }
         }
     }
 
     private void OnTriggerExit(Collider other)
     {
-        if (!other.CompareTag("Player")) return;
+        if (!other.CompareTag("Player"))
+            return;
 
-        _playerInsideCount = Mathf.Max(0, _playerInsideCount - 1);
+        playerInsideCount = Mathf.Max(0, playerInsideCount - 1);
 
-        if (_playerInsideCount == 0)
+        if (playerInsideCount > 0)
+            return;
+
+        playerInside = false;
+
+        if (debugLogs && employee != null)
+            Debug.Log($"[BANK NPC] Player left zone of {employee.EmployeeName}");
+
+        if (dialogueUI != null && dialogueUI.IsOpen)
+            dialogueUI.Close();
+
+        if (sessionStarted && dialogClosedByEsc)
         {
-            _playerInside = false;
+            sessionStarted = false;
+            dialogClosedByEsc = false;
 
-            if (employee != null)
-                Debug.Log($"[BANK NPC] Player left zone of {employee.EmployeeName}");
+            if (dialogueUI != null)
+                dialogueUI.ResetSession();
 
-            if (dialogueUI != null && dialogueUI.IsOpen)
-            {
-                dialogueUI.Close();
-                PlayerInputHandler.SetGameplayBlocked(false);
-            }
-
-            if (_sessionStarted && _dialogClosedByEsc)
-            {
-                _sessionStarted = false;
-                _dialogClosedByEsc = false;
-
-                if (dialogueUI != null)
-                    dialogueUI.ResetSession();
-
-                if (employee != null)
-                    Debug.Log($"[BANK SESJA] ZAKONCZONA z {employee.EmployeeName}");
-            }
+            if (debugLogs && employee != null)
+                Debug.Log($"[BANK SESJA] ZAKONCZONA z {employee.EmployeeName}");
         }
-    }
-
-    private void OnDialogueClosed()
-    {
-        if (!_sessionStarted) return;
-
-        _dialogClosedByEsc = true;
-
-        PlayerInputHandler.SetGameplayBlocked(false);
-
-        Debug.Log($"[BANK SESJA] Dialog zamkniety (event), sesja nadal aktywna: {_sessionStarted}");
     }
 
     private void Update()
     {
-        if (!_playerInside)
+        if (!playerInside)
             return;
 
-        if (dialogueUI == null)
-        {
-            Debug.LogWarning("[BANK NPC] dialogueUI is NULL.");
+        if (dialogueUI == null || employee == null)
             return;
-        }
-
-        if (employee == null)
-        {
-            Debug.LogWarning("[BANK NPC] employee is NULL.");
-            return;
-        }
 
         if (!CanUseBankEmployee())
         {
@@ -133,25 +122,15 @@ public class BankEmployeeInteractZone : MonoBehaviour
             return;
         }
 
-        if (dialogueUI.IsOpen && autoCloseWhenOffDuty && !employee.IsWorkingNow())
-        {
-            _dialogClosedByEsc = true;
-            dialogueUI.Close();
-            PlayerInputHandler.SetGameplayBlocked(false);
-
-            Debug.Log($"[BANK] Zamknieto dialog - pracownik poza godzinami. Sesja: {_sessionStarted}");
-            return;
-        }
-
         if (dialogueUI.IsOpen)
         {
-            if (Input.GetKeyDown(KeyCode.Escape))
+            if (autoCloseWhenOffDuty && !employee.IsWorkingNow())
             {
-                _dialogClosedByEsc = true;
+                dialogClosedByEsc = true;
                 dialogueUI.Close();
-                PlayerInputHandler.SetGameplayBlocked(false);
 
-                Debug.Log($"[BANK SESJA] Dialog zamkniety ESC. Sesja nadal aktywna: {_sessionStarted}");
+                if (debugLogs)
+                    Debug.Log($"[BANK] Zamknieto dialog - pracownik poza godzinami. Sesja: {sessionStarted}");
             }
 
             return;
@@ -164,15 +143,24 @@ public class BankEmployeeInteractZone : MonoBehaviour
         if (!interactPressed)
             return;
 
+        TryOpenDialogue();
+    }
+
+    private void TryOpenDialogue()
+    {
         if (PlayerInputHandler.GameplayInputBlocked)
         {
-            Debug.LogWarning("[BANK NPC] Nie otwarto dialogu, bo GameplayInputBlocked = true.");
+            if (debugLogs)
+                Debug.LogWarning("[BANK NPC] Nie otwarto dialogu, bo GameplayInputBlocked = true.");
+
             return;
         }
 
         if (!employee.IsWorkingNow())
         {
-            Debug.Log($"[BANK] {employee.EmployeeName} poza godzinami ({employee.openHour}:00-{employee.closeHour}:00)");
+            if (debugLogs)
+                Debug.Log($"[BANK] {employee.EmployeeName} poza godzinami ({employee.openHour}:00-{employee.closeHour}:00)");
+
             return;
         }
 
@@ -182,66 +170,58 @@ public class BankEmployeeInteractZone : MonoBehaviour
             return;
         }
 
-        if (!_sessionStarted)
+        if (!sessionStarted)
         {
-            _sessionStarted = true;
-            _dialogClosedByEsc = false;
+            sessionStarted = true;
+            dialogClosedByEsc = false;
             dialogueUI.ResetSession();
         }
 
-        DialogueGraphUI storyUi = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
-
-        if (storyUi != null)
+        if (storyUi != null && storyUi.IsOpen)
             storyUi.Close();
 
-        Debug.Log($"[BANK NPC] Opening dialogue: {employee.EmployeeName}, graph={employee.dialogueGraph.name}");
+        if (debugLogs)
+            Debug.Log($"[BANK NPC] Opening dialogue: {employee.EmployeeName}, graph={employee.dialogueGraph.name}");
 
         dialogueUI.OpenDialogue(employee.dialogueGraph, employee.EmployeeName);
+    }
+
+    private void OnDialogueClosed()
+    {
+        if (!sessionStarted)
+            return;
+
+        dialogClosedByEsc = true;
+
+        if (debugLogs)
+            Debug.Log($"[BANK SESJA] Dialog zamkniety, sesja nadal aktywna: {sessionStarted}");
     }
 
     private bool CanUseBankEmployee()
     {
         if (employee == null)
-        {
-            Debug.LogWarning("[BANK NPC] CanUseBankEmployee false: employee null.");
             return false;
-        }
 
         if (npcCore != null && npcCore.IsDead)
-        {
-            Debug.LogWarning("[BANK NPC] CanUseBankEmployee false: npcCore dead.");
             return false;
-        }
 
-        if (npcController != null)
-        {
-            if (npcController.IsDead)
-            {
-                Debug.LogWarning("[BANK NPC] CanUseBankEmployee false: npcController dead.");
-                return false;
-            }
+        if (npcController == null)
+            return true;
 
-            if (blockWhenDamagedOrProvoked)
-            {
-                if (npcController.IsProvoked)
-                {
-                    Debug.LogWarning("[BANK NPC] CanUseBankEmployee false: NPC provoked.");
-                    return false;
-                }
+        if (npcController.IsDead)
+            return false;
 
-                if (npcController.IsInteractionLocked)
-                {
-                    Debug.LogWarning("[BANK NPC] CanUseBankEmployee false: interaction locked.");
-                    return false;
-                }
+        if (!blockWhenDamagedOrProvoked)
+            return true;
 
-                if (npcController.IsScaredVisible)
-                {
-                    Debug.LogWarning("[BANK NPC] CanUseBankEmployee false: scared visible.");
-                    return false;
-                }
-            }
-        }
+        if (npcController.IsProvoked)
+            return false;
+
+        if (npcController.IsInteractionLocked)
+            return false;
+
+        if (npcController.IsScaredVisible)
+            return false;
 
         return true;
     }
@@ -249,13 +229,10 @@ public class BankEmployeeInteractZone : MonoBehaviour
     private void HandleEmployeeUnavailable()
     {
         if (closeDialogueWhenEmployeeUnavailable && dialogueUI != null && dialogueUI.IsOpen)
-        {
             dialogueUI.Close();
-            PlayerInputHandler.SetGameplayBlocked(false);
-        }
 
-        _sessionStarted = false;
-        _dialogClosedByEsc = false;
+        sessionStarted = false;
+        dialogClosedByEsc = false;
 
         if (dialogueUI != null)
             dialogueUI.ResetSession();
