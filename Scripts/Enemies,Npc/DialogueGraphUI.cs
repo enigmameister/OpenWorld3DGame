@@ -30,15 +30,12 @@ public class DialogueGraphUI : MonoBehaviour
     private bool isOpen;
     private bool waitingForChoice;
 
-    private DialogueGraphUI storyUi;
-
     public bool IsOpen => isOpen;
 
     private void Awake()
     {
         EnsureWindow();
         CloseImmediate();
-        storyUi = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
     }
 
     private void Update()
@@ -55,11 +52,16 @@ public class DialogueGraphUI : MonoBehaviour
 
     public void Open(DialogueGraph graph, string speakerName, MonoBehaviour owner = null)
     {
+        if (graph == null)
+        {
+            if (debugLogs)
+                Debug.LogWarning("[DialogueGraphUI] Tried to open null graph.");
+
+            return;
+        }
+
         if (!EnsureWindow())
             return;
-
-        if (storyUi != null && storyUi.IsOpen)
-            storyUi.Close();
 
         StopRunningCoroutines();
 

@@ -45,6 +45,8 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
     private Transform player;
     private Camera playerCam;
     private bool playerInside;
+    private DialogueGraphUI dialogueUi;
+    private BankDialogueUI bankUi;
 
     private void Awake()
     {
@@ -57,6 +59,9 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
         GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
         if (playerGo != null)
             player = playerGo.transform;
+
+        dialogueUi = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
+        bankUi = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
 
         originalRotation = transform.rotation;
         playerCam = Camera.main;
@@ -116,10 +121,8 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
         if (promptRoot != null)
             promptRoot.SetActive(false);
 
-        DialogueGraphUI ui = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
-
-        if (ui != null && ui.IsOpen)
-            ui.Close();
+        if (dialogueUi != null && dialogueUi.IsOpen)
+            dialogueUi.Close();
     }
 
     private bool CanStartDialogue()
@@ -127,8 +130,10 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
         if (player == null)
             return false;
 
-        float dist = Vector3.Distance(player.position, transform.position);
-        if (dist > interactRadius)
+        float interactRadiusSqr = interactRadius * interactRadius;
+        float distSqr = (player.position - transform.position).sqrMagnitude;
+
+        if (distSqr > interactRadiusSqr)
             return false;
 
         if (!requirePlayerLookingAtNpc)
@@ -161,9 +166,10 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
             return;
         }
 
-        DialogueGraphUI ui = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
+        if (dialogueUi == null)
+            dialogueUi = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
 
-        if (ui == null)
+        if (dialogueUi == null)
         {
             if (debugLogs)
                 Debug.LogWarning("[NPCDialogueGraphInteractor] DialogueGraphUI not found in scene.");
@@ -171,11 +177,13 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
             return;
         }
 
-        BankDialogueUI bankUi = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
+        if (bankUi == null)
+            bankUi = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
+
         if (bankUi != null && bankUi.IsOpen)
             bankUi.Close();
 
-        ui.Open(graph, speakerName, this);
+        dialogueUi.Open(graph, speakerName, this);
     }
 
     private DialogueGraph ResolveGraph()

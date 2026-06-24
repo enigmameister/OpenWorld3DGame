@@ -19,9 +19,14 @@ public class DialogueWindowUI : MonoBehaviour
     [Header("Scroll / Current Line")]
     [SerializeField] private ScrollRect currentLineScroll;
     [SerializeField] private bool autoScrollCurrentLine = true;
-    [SerializeField] private float currentLinePaddingBottom = 30f;
-    [SerializeField] private float currentLineMinExtraHeight = 5f;
-    [SerializeField] private float manualScrollStep = 0.12f;
+    [SerializeField] private float currentLinePaddingBottom = 0f;
+
+    [Header("Scroll / Current Line - Bar")]
+    [SerializeField] private Scrollbar currentLineScrollbar;
+
+    private bool currentLineScrollbarHeld = false;
+    private Coroutine resumeAutoScrollCoroutine;
+    private int currentRevealedCount = 0;
 
     [Header("History Optional")]
     [SerializeField] private TMP_Text historyText;
@@ -58,7 +63,6 @@ public class DialogueWindowUI : MonoBehaviour
 
     public event Action Closed;
 
-    private readonly List<Button> spawnedButtons = new();
     private readonly Queue<string> historyLines = new();
 
     private Coroutine typingCoroutine;
@@ -108,6 +112,7 @@ public class DialogueWindowUI : MonoBehaviour
 
         cachedWeaponManager = FindFirstObjectByType<WeaponManager>();
 
+        ConfigureCurrentLineScrollbar();
         CloseWindowImmediate();
     }
 
@@ -133,7 +138,6 @@ public class DialogueWindowUI : MonoBehaviour
                 FinishTypewriterInstant();
         }
 
-        HandleManualCurrentLineScroll();
         UpdateCurrentLineSmoothScroll();
     }
 
@@ -206,6 +210,16 @@ public class DialogueWindowUI : MonoBehaviour
         fullCurrentText = line ?? "";
         currentLineIsPlayer = isPlayerLine;
         pendingTypeDone = onDone;
+        currentRevealedCount = 0;
+
+        userLockedCurrentLineScroll = false;
+        currentLineScrollbarHeld = false;
+
+        if (resumeAutoScrollCoroutine != null)
+        {
+            StopCoroutine(resumeAutoScrollCoroutine);
+            resumeAutoScrollCoroutine = null;
+        }
 
         if (speakerNameText != null)
             speakerNameText.text = string.IsNullOrWhiteSpace(speaker) ? "" : speaker + ":";
@@ -341,6 +355,7 @@ public class DialogueWindowUI : MonoBehaviour
         }
 
         isTyping = false;
+        currentRevealedCount = fullCurrentText.Length;
 
         if (currentLineText != null)
         {
@@ -385,6 +400,7 @@ public class DialogueWindowUI : MonoBehaviour
             if (nextReveal > revealed)
             {
                 revealed = nextReveal;
+                currentRevealedCount = revealed;
 
                 if (currentLineText != null)
                 {
@@ -414,6 +430,7 @@ public class DialogueWindowUI : MonoBehaviour
 
         isTyping = false;
         typingCoroutine = null;
+        currentRevealedCount = len;
 
         PushHistoryLine(speaker, text);
 
@@ -492,15 +509,15 @@ public class DialogueWindowUI : MonoBehaviour
         if (currentLineScroll == null)
             return;
 
-        if (currentLineScroll.content == null)
-            return;
-
         if (currentLineText == null)
             return;
 
         RectTransform textRt = cachedCurrentLineTextRect;
         RectTransform content = cachedCurrentLineContentRect;
         RectTransform viewport = cachedCurrentLineViewportRect;
+
+        if (textRt == null || content == null)
+            return;
 
         float viewportHeight = viewport != null ? viewport.rect.height : 100f;
 
@@ -518,18 +535,28 @@ public class DialogueWindowUI : MonoBehaviour
 
         currentLineText.ForceMeshUpdate();
 
-        float preferredHeight = currentLineText.GetPreferredValues(
+        TMP_TextInfo textInfo = currentLineText.textInfo;
+
+        float preferredHeightByTMP = currentLineText.GetPreferredValues(
             currentLineText.text,
             contentWidth,
             0f
         ).y;
 
-        preferredHeight += currentLinePaddingBottom;
+        float preferredHeightByLines = preferredHeightByTMP;
 
-        float finalHeight = Mathf.Max(
-            viewportHeight + currentLineMinExtraHeight,
-            preferredHeight
-        );
+        float lineHeight = GetCurrentLineHeight(textInfo);
+
+        if (textInfo != null && textInfo.lineCount > 0 && lineHeight > 0.01f)
+        {
+            preferredHeightByLines = textInfo.lineCount * lineHeight;
+        }
+
+        float preferredHeight = Mathf.Max(preferredHeightByTMP, preferredHeightByLines);
+
+        preferredHeight += Mathf.Max(0f, currentLinePaddingBottom);
+
+        float finalHeight = Mathf.Max(viewportHeight, preferredHeight);
 
         content.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, finalHeight);
         textRt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, finalHeight);
@@ -537,12 +564,30 @@ public class DialogueWindowUI : MonoBehaviour
         Canvas.ForceUpdateCanvases();
     }
 
+    private float GetCurrentLineHeight(TMP_TextInfo textInfo)
+    {
+        if (currentLineText == null)
+            return 16f;
+
+        if (textInfo == null || textInfo.lineCount <= 0)
+            return Mathf.Max(1f, currentLineText.fontSize);
+
+        TMP_LineInfo line = textInfo.lineInfo[0];
+
+        float height = line.ascender - line.descender;
+
+        if (height <= 0.01f)
+            height = currentLineText.fontSize * 1.2f;
+
+        return Mathf.Max(1f, height);
+    }
+
     private void UpdateCurrentLineFollowTarget(int revealedCount)
     {
         if (!autoScrollCurrentLine)
             return;
 
-        if (userLockedCurrentLineScroll)
+        if (userLockedCurrentLineScroll || currentLineScrollbarHeld)
             return;
 
         if (currentLineScroll == null || currentLineText == null)
@@ -565,50 +610,27 @@ public class DialogueWindowUI : MonoBehaviour
             return;
         }
 
-        int charIndex = Mathf.Clamp(revealedCount - 1, 0, textInfo.characterCount - 1);
-        int currentLineIndex = textInfo.characterInfo[charIndex].lineNumber;
-
-        RectTransform viewport = currentLineScroll.viewport != null
-            ? currentLineScroll.viewport
-            : currentLineScroll.GetComponent<RectTransform>();
+        RectTransform viewport = cachedCurrentLineViewportRect;
 
         if (viewport == null)
             return;
 
         float viewportHeight = viewport.rect.height;
+        float lineHeight = GetCurrentLineHeight(textInfo);
 
-        int visibleLines = 0;
-        float usedHeight = 0f;
+        int visibleLines = Mathf.Max(1, Mathf.FloorToInt(viewportHeight / Mathf.Max(1f, lineHeight)));
 
-        for (int i = topLineIndex; i < textInfo.lineCount; i++)
-        {
-            TMP_LineInfo lineInfo = textInfo.lineInfo[i];
+        int charIndex = Mathf.Clamp(revealedCount - 1, 0, textInfo.characterCount - 1);
+        int currentLineIndex = textInfo.characterInfo[charIndex].lineNumber;
 
-            float lineHeight = lineInfo.ascender - lineInfo.descender;
+        int maxTopLineIndex = Mathf.Max(0, textInfo.lineCount - visibleLines);
 
-            if (lineHeight <= 0.01f)
-                lineHeight = currentLineText.fontSize;
-
-            if (visibleLines == 0 || usedHeight + lineHeight <= viewportHeight)
-            {
-                usedHeight += lineHeight;
-                visibleLines++;
-            }
-            else
-            {
-                break;
-            }
-        }
-
-        visibleLines = Mathf.Max(1, visibleLines);
-
-        int bottomVisibleLine = topLineIndex + visibleLines - 1;
-
-        if (currentLineIndex > bottomVisibleLine)
+        if (currentLineIndex >= topLineIndex + visibleLines)
         {
             topLineIndex = currentLineIndex - visibleLines + 1;
-            topLineIndex = Mathf.Clamp(topLineIndex, 0, Mathf.Max(0, textInfo.lineCount - 1));
         }
+
+        topLineIndex = Mathf.Clamp(topLineIndex, 0, maxTopLineIndex);
 
         RefreshCurrentLineContentSize();
 
@@ -626,10 +648,13 @@ public class DialogueWindowUI : MonoBehaviour
             return;
         }
 
-        float firstLineTop = textInfo.lineInfo[0].ascender;
-        float targetLineTop = textInfo.lineInfo[topLineIndex].ascender;
+        if (topLineIndex >= maxTopLineIndex)
+        {
+            currentLineTargetNorm = 0f;
+            return;
+        }
 
-        float offsetFromTop = Mathf.Max(0f, firstLineTop - targetLineTop);
+        float offsetFromTop = topLineIndex * lineHeight;
         offsetFromTop = Mathf.Clamp(offsetFromTop, 0f, maxScroll);
 
         currentLineTargetNorm = 1f - (offsetFromTop / maxScroll);
@@ -640,7 +665,7 @@ public class DialogueWindowUI : MonoBehaviour
         if (!autoScrollCurrentLine || currentLineScroll == null)
             return;
 
-        if (userLockedCurrentLineScroll)
+        if (userLockedCurrentLineScroll || currentLineScrollbarHeld)
             return;
 
         float current = currentLineScroll.verticalNormalizedPosition;
@@ -648,50 +673,6 @@ public class DialogueWindowUI : MonoBehaviour
 
         currentLineScroll.verticalNormalizedPosition =
             Mathf.Lerp(current, currentLineTargetNorm, t);
-    }
-
-    private void HandleManualCurrentLineScroll()
-    {
-        if (currentLineScroll == null)
-            return;
-
-        if (currentLineScroll.viewport == null)
-            return;
-
-        float wheel = Input.mouseScrollDelta.y;
-
-        if (Mathf.Abs(wheel) < 0.01f)
-            return;
-
-        if (!IsPointerOverRect(currentLineScroll.viewport))
-            return;
-
-        RefreshCurrentLineContentSize();
-
-        userLockedCurrentLineScroll = true;
-
-        currentLineScroll.verticalNormalizedPosition =
-            Mathf.Clamp01(currentLineScroll.verticalNormalizedPosition + wheel * manualScrollStep);
-
-        currentLineTargetNorm = currentLineScroll.verticalNormalizedPosition;
-    }
-
-    private bool IsPointerOverRect(RectTransform rect)
-    {
-        if (rect == null)
-            return false;
-
-        Canvas canvas = rect.GetComponentInParent<Canvas>();
-        Camera cam = null;
-
-        if (canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay)
-            cam = canvas.worldCamera;
-
-        return RectTransformUtility.RectangleContainsScreenPoint(
-            rect,
-            Input.mousePosition,
-            cam
-        );
     }
 
     private Vector2 GetOptionPosition(int index, int count)
@@ -847,5 +828,69 @@ public class DialogueWindowUI : MonoBehaviour
         }
 
         return pooledButtons[index];
+    }
+
+    private void ConfigureCurrentLineScrollbar()
+    {
+        if (currentLineScroll == null)
+            return;
+
+        if (currentLineScrollbar == null)
+            currentLineScrollbar = currentLineScroll.verticalScrollbar;
+
+        if (currentLineScrollbar == null)
+            return;
+
+        currentLineScroll.verticalScrollbar = currentLineScrollbar;
+
+        EventTrigger trigger = currentLineScrollbar.GetComponent<EventTrigger>();
+
+        if (trigger == null)
+            trigger = currentLineScrollbar.gameObject.AddComponent<EventTrigger>();
+
+        trigger.triggers ??= new List<EventTrigger.Entry>();
+
+        AddScrollbarEvent(trigger, EventTriggerType.PointerDown, OnCurrentLineScrollbarDown);
+        AddScrollbarEvent(trigger, EventTriggerType.PointerUp, OnCurrentLineScrollbarUp);
+    }
+
+    private void AddScrollbarEvent(EventTrigger trigger, EventTriggerType type, Action<BaseEventData> callback)
+    {
+        EventTrigger.Entry entry = new EventTrigger.Entry
+        {
+            eventID = type
+        };
+
+        entry.callback.AddListener(data => callback?.Invoke(data));
+        trigger.triggers.Add(entry);
+    }
+
+    private void OnCurrentLineScrollbarDown(BaseEventData data)
+    {
+        currentLineScrollbarHeld = true;
+
+        if (resumeAutoScrollCoroutine != null)
+        {
+            StopCoroutine(resumeAutoScrollCoroutine);
+            resumeAutoScrollCoroutine = null;
+        }
+    }
+
+    private void OnCurrentLineScrollbarUp(BaseEventData data)
+    {
+        currentLineScrollbarHeld = false;
+        userLockedCurrentLineScroll = false;
+
+        if (resumeAutoScrollCoroutine != null)
+        {
+            StopCoroutine(resumeAutoScrollCoroutine);
+            resumeAutoScrollCoroutine = null;
+        }
+
+        // Po puszczeniu scrollbara wracamy do automatycznego œledzenia aktualnej linii.
+        RefreshCurrentLineContentSize();
+
+        int reveal = Mathf.Clamp(currentRevealedCount, 0, fullCurrentText.Length);
+        UpdateCurrentLineFollowTarget(reveal);
     }
 }
