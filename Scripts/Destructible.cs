@@ -41,7 +41,6 @@ public class Destructible : MonoBehaviour, IDamageable
             rb.isKinematic = true;
         }
     }
-
     public void TakeDamage(float damage)
     {
         if (damage <= 0f)
@@ -65,11 +64,21 @@ public class Destructible : MonoBehaviour, IDamageable
         Debug.Log($"🎯 {name} trafiony przez {attackerName} za {damage} dmg");
         TakeDamage((float)damage);
     }
-
     void DestroySelf()
     {
         if (isDestroyed) return;
         isDestroyed = true;
+
+        TurretDetection turret = GetComponent<TurretDetection>();
+
+        if (turret == null)
+            turret = GetComponentInChildren<TurretDetection>();
+
+        if (turret == null)
+            turret = GetComponentInParent<TurretDetection>();
+
+        if (turret != null)
+            turret.DisableTurret();
 
         if (fallbackLight != null)
         {

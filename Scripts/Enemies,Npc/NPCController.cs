@@ -98,13 +98,6 @@ public class NPCController : MonoBehaviour, IDamageable
                                                               // na górze pól// na górze pól
     private bool _defenseMode; // Fighter wchodzi do walki tylko, gdy broni Cowarda albo został trafiony
 
-    [Header("Black Aggressive Hunt")]
-    [SerializeField] private bool blackVariantHuntsSilently = true;
-    [SerializeField] private float blackHuntRepathInterval = 0.75f;
-    [SerializeField] private float blackHuntSpeed = 4.5f;
-
-    private float _nextBlackHuntRepath;
-
     [Header("Walka – sekwencja")]
     // NPCController.cs
     private Vector3 _lastPlayerPos;
@@ -133,6 +126,14 @@ public class NPCController : MonoBehaviour, IDamageable
     [SerializeField] private float nearMissThreshold = 2.5f;
     [SerializeField] private LayerMask shotHearingObstaclesMask = ~0;
 
+    [Header("Aggro Memory")]
+    [SerializeField] private float losePlayerDistance = 35f;
+    [SerializeField] private float searchLastSeenTime = 4f;
+
+    private Vector3 lastSeenPlayerPosition;
+    private float lastSeenPlayerTime = -999f;
+    private bool searchingLastSeenPosition = false;
+
     private bool investigatingShot = false;
     private float investigateShotUntil = 0f;
     private Vector3 lastShotPoint;
@@ -148,6 +149,7 @@ public class NPCController : MonoBehaviour, IDamageable
     private Coroutine flashCoroutine;
     private bool inVictoryState = false;
     private static float panicPropagationRadius = 15f;
+    private float cowardFleeSafeUntil = -999f;
     private Quaternion startRotation;
 
     private Rigidbody rootRb;
@@ -226,11 +228,8 @@ public class NPCController : MonoBehaviour, IDamageable
         RecomputeBaseColor();
     }
 
-    // ===== UNITY =====
-
     private void Update()
     {
-
         if (CheatState.Alliance)
         {
             // rozbrój agresję, zatrzymaj broń, pozwól im „żyć swoim życiem”
@@ -252,37 +251,40 @@ public class NPCController : MonoBehaviour, IDamageable
         }
 
 
-        // Aggressive: czarny poluje non-stop; niebieski (gdybyś miał) może nadal na wzrok
         if (reactionType == NPCReactionType.Aggressive && !isProvoked)
         {
-            if (fighterVariant == FighterVariant.Black)
-            {
-                if (PlayerInFrontAndVisible())
-                {
-                    StartAggression(byHit: false);
-                }
-                else if (blackVariantHuntsSilently)
-                {
-                    SilentBlackHuntTick();
-                }
-            }
-            else
-            {
-                if (PlayerInFrontAndVisible())
-                    StartAggression(byHit: false);
-            }
+            if (PlayerInFrontAndVisible())
+                StartAggression(byHit: false);
         }
 
-        // wygaszenie prowokacji (tylko nie-Fighter)
         if (isProvoked &&
             reactionType != NPCReactionType.Fighter &&
+            reactionType != NPCReactionType.Aggressive &&
             (Time.time > reactionEndTime || Vector3.Distance(transform.position, GetCurrentTargetPosition()) > 25f))
         {
             isProvoked = false;
-            if (agent != null && agent.isOnNavMesh) agent.isStopped = false;
+
+            if (agent != null && agent.isOnNavMesh)
+                agent.isStopped = false;
+
             ApplyBodyColor(defaultColor);
             HolsterWeapon(true);
-            if (attackCoroutine != null) { StopCoroutine(attackCoroutine); attackCoroutine = null; }
+
+            if (attackCoroutine != null)
+            {
+                StopCoroutine(attackCoroutine);
+                attackCoroutine = null;
+            }
+
+            HideAllIcons();
+        }
+
+        if (isProvoked &&
+        reactionType == NPCReactionType.Aggressive &&
+        player != null &&
+        !isDead)
+        {
+            HandleAggressiveMemory();
         }
 
         HandleMoveFacing();
@@ -652,8 +654,11 @@ public class NPCController : MonoBehaviour, IDamageable
     {
         isProvoked = true;
 
-        DisableInteractionOnly();
+        lastSeenPlayerPosition = GetCurrentTargetPosition();
+        lastSeenPlayerTime = Time.time;
+        searchingLastSeenPosition = false;
 
+        DisableInteractionOnly();
         ShowAlert(Color.red);
 
         if (!_playerPosInitialized && player != null)
@@ -1255,9 +1260,12 @@ public class NPCController : MonoBehaviour, IDamageable
 
     private void StartCowardFlee()
     {
-        if (isFleeing) return;
-        isFleeing = true;
+        cowardFleeSafeUntil = Time.time + fleeDuration;
 
+        if (isFleeing)
+            return;
+
+        isFleeing = true;
         isProvoked = true;
 
         if (attackCoroutine != null)
@@ -1266,22 +1274,18 @@ public class NPCController : MonoBehaviour, IDamageable
             attackCoroutine = null;
         }
 
-        // NIE zatrzymuj flashCoroutine tutaj.
-        // Hit flash musi mieć czas się pokazać.
-
         StartCoroutine(CowardFleeRoutine());
     }
 
-    // ADD ▼ — ucieczka + raport po ucieczce
     private IEnumerator CowardFleeRoutine()
     {
         float t0 = Time.time;
 
-        // pędź w stronę od gracza
+        // run into player pos
         Vector3 dir = (transform.position - (player ? GetCurrentTargetPosition() : transform.position)).normalized;
         if (dir.sqrMagnitude < 0.01f) dir = -transform.forward;
 
-        // pierwszy cel ucieczki
+        // first escape target
         Vector3 target = transform.position + dir * Mathf.Max(fleeDistance, fleeFarDistance);
         if (NavMesh.SamplePosition(target, out NavMeshHit hit, 3f, NavMesh.AllAreas))
             target = hit.position;
@@ -1293,8 +1297,8 @@ public class NPCController : MonoBehaviour, IDamageable
             agent.SetDestination(target);
         }
 
-        // minimum czasu ucieczki + próba trzymania dystansu
-        while (Time.time - t0 < fleeDuration)
+        // minimum escape time + hold distance
+        while (Time.time < cowardFleeSafeUntil)
         {
             if (agent != null && agent.isOnNavMesh && !agent.pathPending && agent.remainingDistance < 0.8f)
             {
@@ -1307,13 +1311,28 @@ public class NPCController : MonoBehaviour, IDamageable
             yield return null;
         }
 
-        // po ucieczce – przekaż ostatnią znaną pozycję
+        // after run - send last pos
         OnCowardReportedLastKnownPos?.Invoke(lastKnownAttackerPos);
 
         isFleeing = false;
-        // NPC może wrócić do swojego patrolu/idle, ale interakcje/kolizje z graczem pozostają wyłączone
-    }
 
+        // Coward back if not attacked and survived
+        if (!isDead && reactionType == NPCReactionType.Coward)
+        {
+            isProvoked = false;
+            investigatingShot = false;
+
+            HideAllIcons();
+            ApplyBodyColor(defaultColor);
+
+            if (agent != null && agent.enabled && agent.isOnNavMesh)
+            {
+                agent.isStopped = false;
+                agent.ResetPath();
+                PickNewDestination();
+            }
+        }
+    }
 
     public void ReceivePanicFromWitness(Vector3 attackerPos)
     {
@@ -1986,33 +2005,6 @@ public class NPCController : MonoBehaviour, IDamageable
         return NPCPlayerTargetUtility.GetTargetPosition(player);
     }
 
-    private void SilentBlackHuntTick()
-    {
-        if (isDead || player == null)
-            return;
-
-        if (agent == null || !agent.enabled || !agent.isOnNavMesh)
-            return;
-
-        HideAllIcons();
-        HolsterWeapon(true);
-
-        agent.isStopped = false;
-        agent.speed = blackHuntSpeed;
-
-        if (Time.time < _nextBlackHuntRepath)
-            return;
-
-        _nextBlackHuntRepath = Time.time + blackHuntRepathInterval;
-
-        Vector3 targetPos = GetCurrentTargetPosition();
-
-        if (NavMesh.SamplePosition(targetPos, out NavMeshHit hit, 6f, NavMesh.AllAreas))
-            agent.SetDestination(hit.position);
-        else
-            agent.SetDestination(targetPos);
-    }
-
     private GameObject GetNpcWeaponRoot(NPCGun gun)
     {
         if (gun == null)
@@ -2040,6 +2032,89 @@ public class NPCController : MonoBehaviour, IDamageable
 
             if (root != null)
                 root.SetActive(false);
+        }
+    }
+
+    private bool CanSeeCurrentTarget()
+    {
+        return PlayerInFrontAndVisible();
+    }
+
+    private void HandleAggressiveMemory()
+    {
+        Vector3 targetPos = GetCurrentTargetPosition();
+        float distToTarget = Vector3.Distance(transform.position, targetPos);
+
+        bool seesTarget = CanSeeCurrentTarget();
+
+        if (seesTarget && distToTarget <= losePlayerDistance)
+        {
+            lastSeenPlayerPosition = targetPos;
+            lastSeenPlayerTime = Time.time;
+            searchingLastSeenPosition = false;
+
+            ShowAlert(Color.red);
+            return;
+        }
+
+        if (distToTarget <= losePlayerDistance)
+            return;
+
+        if (!searchingLastSeenPosition)
+        {
+            searchingLastSeenPosition = true;
+
+            if (agent != null && agent.enabled && agent.isOnNavMesh)
+            {
+                agent.isStopped = false;
+                agent.ResetPath();
+                agent.SetDestination(lastSeenPlayerPosition);
+            }
+
+            return;
+        }
+
+        if (agent != null && agent.enabled && agent.isOnNavMesh)
+        {
+            bool arrived =
+                !agent.pathPending &&
+                agent.remainingDistance <= investigateArriveTolerance;
+
+            bool searchedLongEnough =
+                Time.time - lastSeenPlayerTime >= searchLastSeenTime;
+
+            if (arrived || searchedLongEnough)
+            {
+                ReturnAggressiveToIdle();
+            }
+        }
+        else
+        {
+            ReturnAggressiveToIdle();
+        }
+    }
+    private void ReturnAggressiveToIdle()
+    {
+        isProvoked = false;
+        searchingLastSeenPosition = false;
+        investigatingShot = false;
+        _defenseMode = false;
+
+        HideAllIcons();
+        ApplyBodyColor(defaultColor);
+        HolsterWeapon(true);
+
+        if (attackCoroutine != null)
+        {
+            StopCoroutine(attackCoroutine);
+            attackCoroutine = null;
+        }
+
+        if (agent != null && agent.enabled && agent.isOnNavMesh)
+        {
+            agent.isStopped = false;
+            agent.ResetPath();
+            PickNewDestination();
         }
     }
 }

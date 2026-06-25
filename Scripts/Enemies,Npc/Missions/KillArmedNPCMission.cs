@@ -12,6 +12,8 @@ public class KillArmedNPCMission : MonoBehaviour
         ReadyToClaim,
         RewardClaimed
     }
+    [Header("Mission Tracker Entry")]
+    [SerializeField] private MissionTrackerEntryUI trackerEntry;
 
     [Header("Mission")]
     [SerializeField] private int requiredScore = 30;
@@ -201,6 +203,19 @@ public class KillArmedNPCMission : MonoBehaviour
                 resultValueText.text = "PASS";
             else
                 resultValueText.text = $"{armedNpcScore}/{requiredScore}";
+        }
+
+        if (trackerEntry != null)
+        {
+            bool showTracker =
+                state == MissionState.Active ||
+                state == MissionState.ReadyToClaim ||
+                state == MissionState.RewardClaimed;
+
+            trackerEntry.SetVisible(showTracker);
+            trackerEntry.SetTitle("ELIMINATE ARMED NPCS");
+            trackerEntry.SetProgress(armedNpcScore, innocentNpcKilled, armedNpcScore, requiredScore);
+            trackerEntry.SetStatus(state);
         }
     }
 

@@ -36,7 +36,7 @@ MonoBehaviour:
       debugEvent: Mission_TestHouse_Decline
     endAfterNpcLine: 0
   - id: accepted
-    npcText: Okay, come back when you eliminate 30 armed NPCs...
+    npcText: Okay, come back when you eliminate armed NPCs...
     options: []
     endAfterNpcLine: 1
   - id: declined

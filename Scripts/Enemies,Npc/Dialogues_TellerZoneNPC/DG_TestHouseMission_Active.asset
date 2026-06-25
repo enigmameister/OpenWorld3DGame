@@ -16,7 +16,7 @@ MonoBehaviour:
   - id: start
     npcText: 'You''re not done yet.
 
-      Eliminate 30 aggressive or armed NPCs.
+      Eliminate aggressive or armed NPCs.
 
       Remember:
       killing innocent civilians will lower your score.'

@@ -41,6 +41,8 @@ public class TurretDetection : MonoBehaviour
     private CharacterController playerController;
     private WeaponManager playerWeaponManager;
 
+    private bool isDisabled = false;
+
     void Start()
     {
         player = GameObject.FindGameObjectWithTag("Player")?.transform;
@@ -64,7 +66,11 @@ public class TurretDetection : MonoBehaviour
 
     void Update()
     {
-        if (player == null) return;
+       if (isDisabled)
+                return;
+
+       if (player == null)
+                return;
 
         Vector3 directionToPlayer = player.position - transform.position;
         float distanceToPlayer = directionToPlayer.magnitude;
@@ -181,40 +187,90 @@ public class TurretDetection : MonoBehaviour
         lastFireTime = Time.time;
         isFiring = false;
     }
-
     void FireBullet()
     {
-        if (bulletPrefab == null || shotPoint == null) return;
-
-        GameObject bullet = Instantiate(bulletPrefab, shotPoint.position, Quaternion.identity);
-
-        Rigidbody rb = bullet.GetComponent<Rigidbody>();
-        Collider bulletCol = bullet.GetComponent<Collider>();
+        if (bulletPrefab == null || shotPoint == null)
+            return;
 
         Vector3 targetPos = GetLaserTargetPoint();
-        Vector3 shootDir = (targetPos - shotPoint.position).normalized;
+        Vector3 shootDir = targetPos - shotPoint.position;
 
-        if (rb != null)
+        if (shootDir.sqrMagnitude < 0.001f)
+            shootDir = shotPoint.forward;
+
+        shootDir.Normalize();
+
+        GameObject bullet = Instantiate(
+            bulletPrefab,
+            shotPoint.position + shootDir * 0.35f,
+            Quaternion.LookRotation(shootDir)
+        );
+
+        Collider bulletCol = bullet.GetComponent<Collider>();
+
+        Collider[] turretCols = transform.root.GetComponentsInChildren<Collider>();
+
+        for (int i = 0; i < turretCols.Length; i++)
         {
-            bullet.transform.rotation = Quaternion.LookRotation(shootDir);
-            bullet.transform.position += shootDir * 0.2f;
-            rb.linearVelocity = shootDir * bulletSpeed;
+            if (bulletCol != null && turretCols[i] != null)
+                Physics.IgnoreCollision(bulletCol, turretCols[i]);
         }
 
-        Collider[] turretCols = shotPoint.root.GetComponentsInChildren<Collider>();
-        foreach (var col in turretCols)
-        {
-            if (bulletCol != null && col != null)
-                Physics.IgnoreCollision(bulletCol, col);
-        }
+        TurretProjectile projectile = bullet.GetComponent<TurretProjectile>();
 
-        var bulletScript = bullet.GetComponent<Bullet>();
-        if (bulletScript != null)
+        if (projectile != null)
         {
-            bulletScript.SetShooter(gameObject, bulletDamage);
+            projectile.Init(
+                gameObject,
+                shootDir,
+                bulletSpeed,
+                Mathf.RoundToInt(bulletDamage)
+            );
+        }
+        else
+        {
+            Rigidbody rb = bullet.GetComponent<Rigidbody>();
+
+            if (rb != null)
+            {
+#if UNITY_6000_0_OR_NEWER
+                rb.linearVelocity = shootDir * bulletSpeed;
+#else
+            rb.velocity = shootDir * bulletSpeed;
+#endif
+            }
         }
 
         if (muzzleFlash != null)
             muzzleFlash.Play();
     }
+
+    public void DisableTurret()
+    {
+        isDisabled = true;
+        canAttack = false;
+        playerVisible = false;
+        laserLockedOnPlayer = false;
+
+        if (laserLine != null)
+        {
+            laserLine.enabled = false;
+            laserLine.positionCount = 0;
+        }
+
+        if (muzzleFlash != null)
+            muzzleFlash.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+        StopAllCoroutines();
+
+        isFiring = false;
+
+        SetTurretColor(Color.gray);
+    }
+    private void OnDisable()
+    {
+        if (laserLine != null)
+            laserLine.enabled = false;
+    }
+
 }
