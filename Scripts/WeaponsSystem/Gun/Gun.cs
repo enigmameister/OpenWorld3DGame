@@ -143,6 +143,20 @@ public class Gun : MonoBehaviour, IInventoryItemInstanceProvider
     {
         if (isControlledByNPC) return;
 
+        if (PlayerInputHandler.GameplayInputBlocked)
+        {
+            if (IsReloading)
+                reloadController?.StopReload();
+
+            if (_isADS)
+                SetADS(false);
+
+            scopeController?.UpdateScopeVisuals(IsReloading);
+            fovController?.UpdateFOV(_isADS, IsReloading, sniperCfg);
+
+            return;
+        }
+
         bool isReloading = IsReloading;
 
         if (PlayerDead)
@@ -225,28 +239,7 @@ public class Gun : MonoBehaviour, IInventoryItemInstanceProvider
 
     void OnDisable()
     {
-        // ⬇️ DODANE: gwarantowane wyjście ze scope'a przy chowaniu broni
-        if (sniperCfg != null)
-            sniperCfg.ExitScope();  // zeruje zoomLevel, chowa overlay i wyłącza ADS
-
-        SetADS(false);
-        lastAdsChangeTime = Time.time;
-        sniperCfg?.ExitScope();
-
-        reloadController?.CleanupOnDisable();
-
-        // 🔧 NOWE — zatrzymanie fire cooldown
-        if (_fireCooldownBarCo != null)
-        {
-            StopCoroutine(_fireCooldownBarCo);
-            _gunUI?.StopSniperCooldown();
-            _fireCooldownBarCo = null;
-        }
-        ApplyScopedSensitivity(false, false);
-
-        scopeController?.ResetScopeVisuals();
-
-        ResetAimStateOnHolster();
+        ForceCancelCombatState();
     }
 
     public void BindCamera(Camera cam, bool snapshotDefaultFOV = true)
@@ -541,17 +534,9 @@ public class Gun : MonoBehaviour, IInventoryItemInstanceProvider
 
     public void ResetAimStateOnHolster()
     {
-        // wyjdź ze scope’a, jeśli to snajperka
-        if (sniperCfg != null)
-            sniperCfg.ExitScope();
-
-        // gwarantuj wyłączenie ADS
-        SetADS(false);
-
-        // jeśli masz jakieś animacje/parametry celowania – wyzeruj tu (opcjonalnie)
-        lastAdsChangeTime = Time.time; // jeśli u Ciebie istnieje taki mechanizm
-        adsController?.ResetADS();
+        ForceCancelCombatState();
     }
+
     public bool IsScoped()
     {
         // Jeśli ma plugin – jego stan decyduje.
@@ -769,5 +754,36 @@ public class Gun : MonoBehaviour, IInventoryItemInstanceProvider
         scopeController?.BindOverlayCamera(weaponOverlayCamera);
 
         weaponRecoil?.SetCameraRecoilController(recoilController);
+    }
+
+    public void ForceCancelCombatState()
+    {
+        if (reloadController != null)
+        {
+            if (reloadController.IsReloading)
+                reloadController.StopReload();
+
+            reloadController.CleanupOnDisable();
+        }
+
+        SetADS(false);
+
+        if (sniperCfg != null)
+            sniperCfg.ExitScope();
+
+        lastAdsChangeTime = Time.time;
+
+        if (_fireCooldownBarCo != null)
+        {
+            StopCoroutine(_fireCooldownBarCo);
+            _gunUI?.StopSniperCooldown();
+            _fireCooldownBarCo = null;
+        }
+
+        ApplyScopedSensitivity(false, false);
+
+        scopeController?.ResetScopeVisuals();
+
+        adsController?.ResetADS();
     }
 }

@@ -467,7 +467,12 @@ public class MountedSniperStation : MonoBehaviour
     {
         if (!IsPlayerMounted) return;
 
-        // wyłącz scope + snajperkę
+        if (sniperGun != null)
+        {
+            sniperGun.ForceCancelCombatState();
+            sniperGun.SetExternalCombatInput(false);
+        }
+
         if (sniperCfg)
         {
             sniperCfg.ExitScope();

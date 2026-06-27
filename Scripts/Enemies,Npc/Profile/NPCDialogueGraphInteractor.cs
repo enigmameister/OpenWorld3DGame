@@ -12,7 +12,7 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
     [Header("Dialogue")]
     [SerializeField] private DialogueGraph defaultGraph;
 
-    [Tooltip("Opcjonalnie póŸniej u¿yjemy tego do wyboru graphu wed³ug stanu misji.")]
+    [Tooltip("Optional")]
     [SerializeField] private DialogueGraphRegistry graphRegistry;
 
     [SerializeField] private string notStartedGraphKey = "TestHouse_Offer";
@@ -36,6 +36,10 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
     [SerializeField] private float maxTurnSpeed = 540f;
     [SerializeField] private float faceHoldDistance = 4f;
 
+    [Header("Mission List")]
+    [SerializeField] private NPCMissionGiver missionGiver;
+    [SerializeField] private NPCMissionListUI missionListUI;
+
     private Quaternion originalRotation;
     private bool shouldFacePlayer;
     private bool shouldReturnRotation;
@@ -52,8 +56,13 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
     {
         if (promptRoot != null)
             promptRoot.SetActive(false);
-    }
 
+        if (missionGiver == null)
+            missionGiver = GetComponent<NPCMissionGiver>();
+
+        if (missionListUI == null)
+            missionListUI = FindFirstObjectByType<NPCMissionListUI>(FindObjectsInactive.Include);
+    }
     private void Start()
     {
         GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
@@ -156,6 +165,35 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
 
     private void StartDialogue()
     {
+        if (missionGiver != null && missionGiver.HasAnyMission())
+        {
+            if (missionListUI == null)
+                missionListUI = FindFirstObjectByType<NPCMissionListUI>(FindObjectsInactive.Include);
+
+            if (missionListUI != null)
+            {
+                if (!missionListUI.HasVisibleMissions(missionGiver))
+                {
+                    if (debugLogs)
+                        Debug.Log($"[NPCDialogueGraphInteractor] {name}: no visible missions, interaction ignored.");
+
+                    return;
+                }
+
+                BankDialogueUI bankUi = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
+
+                if (bankUi != null && bankUi.IsOpen)
+                    bankUi.Close();
+
+                missionListUI.Open(missionGiver, this);
+                return;
+            }
+
+            // Wa¿ne:
+            // jeœli NPC ma missionGiver, ale nie ma MissionListUI,
+            // nie odpalaj starego default dialogu przypadkiem.
+            return;
+        }
         DialogueGraph graph = ResolveGraph();
 
         if (graph == null)
@@ -166,10 +204,17 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
             return;
         }
 
-        if (dialogueUi == null)
-            dialogueUi = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
+        OpenDialogueGraphDirect(graph, speakerName);
+    }
 
-        if (dialogueUi == null)
+    public void OpenDialogueGraphDirect(DialogueGraph graph, string speaker)
+    {
+        if (graph == null)
+            return;
+
+        DialogueGraphUI ui = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
+
+        if (ui == null)
         {
             if (debugLogs)
                 Debug.LogWarning("[NPCDialogueGraphInteractor] DialogueGraphUI not found in scene.");
@@ -177,13 +222,11 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
             return;
         }
 
-        if (bankUi == null)
-            bankUi = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
-
+        BankDialogueUI bankUi = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
         if (bankUi != null && bankUi.IsOpen)
             bankUi.Close();
 
-        dialogueUi.Open(graph, speakerName, this);
+        ui.Open(graph, string.IsNullOrWhiteSpace(speaker) ? speakerName : speaker, this);
     }
 
     private DialogueGraph ResolveGraph()

@@ -155,6 +155,9 @@ public class DialogueWindowUI : MonoBehaviour
 
         if (lockPlayer)
             LockPlayer();
+
+        Cursor.visible = true;
+        Cursor.lockState = CursorLockMode.None;
     }
 
     public void CloseWindow(bool unlockPlayer = true)
@@ -788,9 +791,6 @@ public class DialogueWindowUI : MonoBehaviour
         PlayerMovement.IsMovementLocked = true;
         PlayerInputHandler.SetGameplayBlocked(true);
 
-        Cursor.visible = true;
-        Cursor.lockState = CursorLockMode.None;
-
         if (disableWeaponManagerDuringDialogue)
         {
             if (cachedWeaponManager == null)
@@ -799,7 +799,11 @@ public class DialogueWindowUI : MonoBehaviour
             if (cachedWeaponManager != null)
                 cachedWeaponManager.enabled = false;
         }
+
+        Cursor.visible = true;
+        Cursor.lockState = CursorLockMode.None;
     }
+
     private void UnlockPlayer()
     {
         MouseLook.IsLookLocked = false;

@@ -131,9 +131,6 @@ public class KillArmedNPCMission : MonoBehaviour
         if (doorAccess != null)
             doorAccess.UnlockAccess();
 
-        if (debugLogs)
-            Debug.Log("[KillArmedNPCMission] Reward claimed. Door access unlocked.");
-
         RefreshUI();
     }
 
@@ -205,17 +202,20 @@ public class KillArmedNPCMission : MonoBehaviour
                 resultValueText.text = $"{armedNpcScore}/{requiredScore}";
         }
 
+        bool showTracker =
+            state == MissionState.Active ||
+            state == MissionState.ReadyToClaim;
+
         if (trackerEntry != null)
         {
-            bool showTracker =
-                state == MissionState.Active ||
-                state == MissionState.ReadyToClaim ||
-                state == MissionState.RewardClaimed;
-
             trackerEntry.SetVisible(showTracker);
-            trackerEntry.SetTitle("ELIMINATE ARMED NPCS");
-            trackerEntry.SetProgress(armedNpcScore, innocentNpcKilled, armedNpcScore, requiredScore);
-            trackerEntry.SetStatus(state);
+
+            if (showTracker)
+            {
+                trackerEntry.SetTitle("ELIMINATE ARMED NPCS");
+                trackerEntry.SetProgress(armedNpcScore, innocentNpcKilled, armedNpcScore, requiredScore);
+                trackerEntry.SetStatus(state);
+            }
         }
     }
 

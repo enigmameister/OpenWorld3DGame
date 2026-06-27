@@ -38,12 +38,12 @@ public class PlayerInputHandler : MonoBehaviour
     public bool IsCrouching => playerMap.FindAction("Crouch").IsPressed();
     public bool JumpPressed => playerMap.FindAction("Jump").triggered;
     public bool JumpHeld => playerMap.FindAction("Jump").IsPressed();
-    public bool FirePressed => playerMap.FindAction("Fire").IsPressed();
-    public bool FirePressedThisFrame => playerMap.FindAction("Fire").triggered;
-    public bool FireReleasedThisFrame => playerMap.FindAction("Fire").WasReleasedThisFrame();
-    public bool FireHeld => playerMap.FindAction("Fire").ReadValue<float>() > 0.1f;
-    public bool ReloadPressed => playerMap.FindAction("Reload").IsPressed();
-    public bool ReloadPressedThisFrame => playerMap.FindAction("Reload").triggered;
+    public bool FirePressed => !GameplayInputBlocked && playerMap.FindAction("Fire").IsPressed();
+    public bool FirePressedThisFrame => !GameplayInputBlocked && playerMap.FindAction("Fire").triggered;
+    public bool FireReleasedThisFrame => !GameplayInputBlocked && playerMap.FindAction("Fire").WasReleasedThisFrame();
+    public bool FireHeld =>     !GameplayInputBlocked && playerMap.FindAction("Fire").ReadValue<float>() > 0.1f;
+    public bool ReloadPressed => !GameplayInputBlocked && playerMap.FindAction("Reload").IsPressed();
+    public bool ReloadPressedThisFrame => !GameplayInputBlocked && playerMap.FindAction("Reload").triggered;
     public bool InteractPressedThisFrame => !GameplayInputBlocked && inputActions.Player.Interact.triggered;
     public bool InteractPressed => !GameplayInputBlocked && playerMap.FindAction("Interact").triggered;
     public bool InteractHeld => !GameplayInputBlocked && playerMap.FindAction("Interact").IsPressed();
@@ -53,12 +53,12 @@ public class PlayerInputHandler : MonoBehaviour
 
     // itd. (wszystko co ma być zablokowane w UI)
 
-    public bool FireAltHeld => playerMap.FindAction("FireAlt").ReadValue<float>() > 0.1f;
-    public bool FireAltPressed => playerMap.FindAction("FireAlt").triggered;
-    public bool DropWeaponPressed => playerMap.FindAction("DropWeapon").triggered;
-    public bool DropWeaponPressedThisFrame => playerMap.FindAction("DropWeapon").triggered;
+    public bool FireAltHeld => !GameplayInputBlocked && playerMap.FindAction("FireAlt").ReadValue<float>() > 0.1f;
+    public bool FireAltPressed => !GameplayInputBlocked && playerMap.FindAction("FireAlt").triggered;
+    public bool DropWeaponPressed => !GameplayInputBlocked && playerMap.FindAction("DropWeapon").triggered;
+    public bool DropWeaponPressedThisFrame => !GameplayInputBlocked && playerMap.FindAction("DropWeapon").triggered;
     public bool SwitchCameraPressedThisFrame => playerMap.FindAction("SwitchCamera")?.WasPressedThisFrame() ?? false;
-    public bool PrevWeaponPressedThisFrame => playerMap.FindAction("PrevWeapon")?.triggered ?? false;
+    public bool PrevWeaponPressedThisFrame => !GameplayInputBlocked && (playerMap.FindAction("PrevWeapon")?.triggered ?? false);
     public bool QuickSavePressedThisFrame => playerMap.FindAction("QuickSave")?.triggered ?? false;
     public bool QuickLoadPressedThisFrame => playerMap.FindAction("QuickLoad")?.triggered ?? false;
 
