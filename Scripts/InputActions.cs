@@ -367,6 +367,15 @@ public partial class @InputActions: IInputActionCollection2, IDisposable
                     ""processors"": """",
                     ""interactions"": """",
                     ""initialStateCheck"": false
+                },
+                {
+                    ""name"": ""Objectives"",
+                    ""type"": ""Button"",
+                    ""id"": ""2bffbd9c-0443-479d-b95c-ab09164c38f3"",
+                    ""expectedControlType"": """",
+                    ""processors"": """",
+                    ""interactions"": """",
+                    ""initialStateCheck"": false
                 }
             ],
             ""bindings"": [
@@ -600,6 +609,17 @@ public partial class @InputActions: IInputActionCollection2, IDisposable
                     ""action"": ""MapToggle"",
                     ""isComposite"": false,
                     ""isPartOfComposite"": false
+                },
+                {
+                    ""name"": """",
+                    ""id"": ""fc2d385d-980e-4a3c-a41c-af7a44ee00af"",
+                    ""path"": ""<Keyboard>/o"",
+                    ""interactions"": """",
+                    ""processors"": """",
+                    ""groups"": """",
+                    ""action"": ""Objectives"",
+                    ""isComposite"": false,
+                    ""isPartOfComposite"": false
                 }
             ]
         }
@@ -630,6 +650,7 @@ public partial class @InputActions: IInputActionCollection2, IDisposable
         m_Player_QuickSave = m_Player.FindAction("QuickSave", throwIfNotFound: true);
         m_Player_QuickLoad = m_Player.FindAction("QuickLoad", throwIfNotFound: true);
         m_Player_MapToggle = m_Player.FindAction("MapToggle", throwIfNotFound: true);
+        m_Player_Objectives = m_Player.FindAction("Objectives", throwIfNotFound: true);
     }
 
     ~@InputActions()
@@ -846,6 +867,7 @@ public partial class @InputActions: IInputActionCollection2, IDisposable
     private readonly InputAction m_Player_QuickSave;
     private readonly InputAction m_Player_QuickLoad;
     private readonly InputAction m_Player_MapToggle;
+    private readonly InputAction m_Player_Objectives;
     /// <summary>
     /// Provides access to input actions defined in input action map "Player".
     /// </summary>
@@ -926,6 +948,10 @@ public partial class @InputActions: IInputActionCollection2, IDisposable
         /// </summary>
         public InputAction @MapToggle => m_Wrapper.m_Player_MapToggle;
         /// <summary>
+        /// Provides access to the underlying input action "Player/Objectives".
+        /// </summary>
+        public InputAction @Objectives => m_Wrapper.m_Player_Objectives;
+        /// <summary>
         /// Provides access to the underlying input action map instance.
         /// </summary>
         public InputActionMap Get() { return m_Wrapper.m_Player; }
@@ -1002,6 +1028,9 @@ public partial class @InputActions: IInputActionCollection2, IDisposable
             @MapToggle.started += instance.OnMapToggle;
             @MapToggle.performed += instance.OnMapToggle;
             @MapToggle.canceled += instance.OnMapToggle;
+            @Objectives.started += instance.OnObjectives;
+            @Objectives.performed += instance.OnObjectives;
+            @Objectives.canceled += instance.OnObjectives;
         }
 
         /// <summary>
@@ -1064,6 +1093,9 @@ public partial class @InputActions: IInputActionCollection2, IDisposable
             @MapToggle.started -= instance.OnMapToggle;
             @MapToggle.performed -= instance.OnMapToggle;
             @MapToggle.canceled -= instance.OnMapToggle;
+            @Objectives.started -= instance.OnObjectives;
+            @Objectives.performed -= instance.OnObjectives;
+            @Objectives.canceled -= instance.OnObjectives;
         }
 
         /// <summary>
@@ -1252,5 +1284,12 @@ public partial class @InputActions: IInputActionCollection2, IDisposable
         /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
         /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
         void OnMapToggle(InputAction.CallbackContext context);
+        /// <summary>
+        /// Method invoked when associated input action "Objectives" is either <see cref="UnityEngine.InputSystem.InputAction.started" />, <see cref="UnityEngine.InputSystem.InputAction.performed" /> or <see cref="UnityEngine.InputSystem.InputAction.canceled" />.
+        /// </summary>
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.started" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.performed" />
+        /// <seealso cref="UnityEngine.InputSystem.InputAction.canceled" />
+        void OnObjectives(InputAction.CallbackContext context);
     }
 }

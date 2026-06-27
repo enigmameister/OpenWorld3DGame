@@ -16,12 +16,12 @@ public class KillArmedNPCMission : MonoBehaviour
     [SerializeField] private MissionTrackerEntryUI trackerEntry;
 
     [Header("Mission")]
-    [SerializeField] private int requiredScore = 30;
+    [SerializeField] public int requiredScore = 30;
     [SerializeField] private MissionState state = MissionState.NotStarted;
 
     [Header("Runtime")]
-    [SerializeField] private int armedNpcScore = 0;
-    [SerializeField] private int innocentNpcKilled = 0;
+    [SerializeField] public int armedNpcScore = 0;
+    [SerializeField] public int innocentNpcKilled = 0;
 
     [Header("Reward")]
     [SerializeField] private TestHouseDoorAccessController doorAccess;
@@ -239,5 +239,23 @@ public class KillArmedNPCMission : MonoBehaviour
         }
 
         RefreshUI();
+    }
+
+    public void AbandonMission()
+    {
+        if (state != MissionState.Active &&
+            state != MissionState.ReadyToClaim)
+        {
+            return;
+        }
+
+        armedNpcScore = 0;
+        innocentNpcKilled = 0;
+
+        state = MissionState.NotStarted;
+
+        RefreshUI();
+
+        Debug.Log("[KillArmedNPCMission] Mission abandoned.");
     }
 }

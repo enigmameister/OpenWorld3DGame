@@ -32,7 +32,6 @@ public class PlayerInputHandler : MonoBehaviour
     void OnEnable() => inputActions.Enable();
     void OnDisable() => inputActions.Disable();
 
-    // === Twoje istniejące właściwości (zostawiam) ===
     public Vector2 Move => playerMap.FindAction("Move").ReadValue<Vector2>();
     public bool IsSprinting => playerMap.FindAction("Sprint").IsPressed();
     public bool IsCrouching => playerMap.FindAction("Crouch").IsPressed();
@@ -41,7 +40,7 @@ public class PlayerInputHandler : MonoBehaviour
     public bool FirePressed => !GameplayInputBlocked && playerMap.FindAction("Fire").IsPressed();
     public bool FirePressedThisFrame => !GameplayInputBlocked && playerMap.FindAction("Fire").triggered;
     public bool FireReleasedThisFrame => !GameplayInputBlocked && playerMap.FindAction("Fire").WasReleasedThisFrame();
-    public bool FireHeld =>     !GameplayInputBlocked && playerMap.FindAction("Fire").ReadValue<float>() > 0.1f;
+    public bool FireHeld => !GameplayInputBlocked && playerMap.FindAction("Fire").ReadValue<float>() > 0.1f;
     public bool ReloadPressed => !GameplayInputBlocked && playerMap.FindAction("Reload").IsPressed();
     public bool ReloadPressedThisFrame => !GameplayInputBlocked && playerMap.FindAction("Reload").triggered;
     public bool InteractPressedThisFrame => !GameplayInputBlocked && inputActions.Player.Interact.triggered;
@@ -50,9 +49,8 @@ public class PlayerInputHandler : MonoBehaviour
     public bool InventoryPressed => !GameplayInputBlocked && playerMap.FindAction("Inventory").triggered;
     public bool ToggleConsolePressed => !GameplayInputBlocked && playerMap.FindAction("ToggleConsole").triggered;
     public bool MapTogglePressedThisFrame => playerMap.FindAction("MapToggle")?.WasPressedThisFrame() == true;
-
-    // itd. (wszystko co ma być zablokowane w UI)
-
+    public bool ObjectivesPressedThisFrame => !GameplayInputBlocked && playerMap.FindAction("Objectives") != null && playerMap.FindAction("Objectives").triggered;
+    public bool ObjectivesRawPressedThisFrame => playerMap.FindAction("Objectives")?.triggered ?? false;
     public bool FireAltHeld => !GameplayInputBlocked && playerMap.FindAction("FireAlt").ReadValue<float>() > 0.1f;
     public bool FireAltPressed => !GameplayInputBlocked && playerMap.FindAction("FireAlt").triggered;
     public bool DropWeaponPressed => !GameplayInputBlocked && playerMap.FindAction("DropWeapon").triggered;
@@ -62,7 +60,6 @@ public class PlayerInputHandler : MonoBehaviour
     public bool QuickSavePressedThisFrame => playerMap.FindAction("QuickSave")?.triggered ?? false;
     public bool QuickLoadPressedThisFrame => playerMap.FindAction("QuickLoad")?.triggered ?? false;
 
-    // === NOWE: LookDelta wykorzystywane przez freelock w CarInteraction ===
     public Vector2 LookDelta
     {
         get
@@ -76,7 +73,6 @@ public class PlayerInputHandler : MonoBehaviour
         }
     }
 
-    // ✅ JEDNO ŹRÓDŁO PRAWDY
     public static void SetGameplayBlocked(bool blocked)
     {
         GameplayInputBlocked = blocked;

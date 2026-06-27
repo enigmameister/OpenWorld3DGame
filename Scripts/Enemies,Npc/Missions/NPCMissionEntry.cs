@@ -18,4 +18,17 @@ public class NPCMissionEntry
     public DialogueGraph activeGraph;
     public DialogueGraph readyToClaimGraph;
     public DialogueGraph completedGraph;
+
+    public string GetOfferDescription()
+    {
+        if (offerGraph == null)
+            return "";
+
+        DialogueNode startNode = offerGraph.GetNode(offerGraph.startNodeId);
+
+        if (startNode == null)
+            return "";
+
+        return startNode.npcText;
+    }
 }
