@@ -158,12 +158,12 @@ public class NPCMissionListUI : MonoBehaviour
 
         for (int i = 0; i < currentGiver.Missions.Length; i++)
         {
-            NPCMissionEntry mission = currentGiver.Missions[i];
+            MissionDefinition mission = currentGiver.Missions[i];
 
             if (mission == null)
                 continue;
 
-            KillArmedNPCMission.MissionState state = GetMissionState(mission);
+            MissionRuntimeState state = GetMissionState(mission);
 
             if (ShouldHideMission(mission, state))
                 continue;
@@ -191,27 +191,22 @@ public class NPCMissionListUI : MonoBehaviour
         spawnedEntries.Clear();
     }
 
-    private KillArmedNPCMission.MissionState GetMissionState(NPCMissionEntry mission)
+    private MissionRuntimeState GetMissionState(MissionDefinition mission)
     {
-        // Na razie obs³ugujemy pierwsz¹ misjê TestHouse przez istniej¹cy KillArmedNPCMission.
-        // PóŸniej zast¹pimy to generic MissionManagerem.
-        if (KillArmedNPCMission.Instance == null)
-            return KillArmedNPCMission.MissionState.NotStarted;
+        if (MissionCoordinator.Instance == null || mission == null)
+            return MissionRuntimeState.NotStarted;
 
-        if (mission.missionId == "Mission_TestHouse")
-            return KillArmedNPCMission.Instance.State;
-
-        return KillArmedNPCMission.MissionState.NotStarted;
+        return MissionCoordinator.Instance.GetMissionState(mission.missionId);
     }
 
-    private bool ShouldHideMission(NPCMissionEntry mission, KillArmedNPCMission.MissionState state)
+    private bool ShouldHideMission(MissionDefinition mission, MissionRuntimeState state)
     {
         if (mission == null)
             return true;
 
-        if (state == KillArmedNPCMission.MissionState.RewardClaimed &&
+        if (state == MissionRuntimeState.RewardClaimed &&
             !mission.repeatable &&
-            mission.hideAfterRewardClaimed)
+            mission.hideAfterCompleted)
         {
             return true;
         }
@@ -219,7 +214,7 @@ public class NPCMissionListUI : MonoBehaviour
         return false;
     }
 
-    public void SelectMission(NPCMissionEntry mission)
+    public void SelectMission(MissionDefinition mission)
     {
         if (mission == null)
             return;
@@ -229,7 +224,7 @@ public class NPCMissionListUI : MonoBehaviour
         if (graph == null)
         {
             if (debugLogs)
-                Debug.LogWarning($"[NPCMissionListUI] No graph for mission: {mission.displayName}");
+                Debug.LogWarning($"[NPCMissionListUI] No graph for mission: {mission.title}");
 
             return;
         }
@@ -243,30 +238,12 @@ public class NPCMissionListUI : MonoBehaviour
             interactor.OpenDialogueGraphDirect(graph, giver != null ? giver.NpcName : "NPC");
     }
 
-    private DialogueGraph ResolveGraph(NPCMissionEntry mission)
+    private DialogueGraph ResolveGraph(MissionDefinition mission)
     {
-        KillArmedNPCMission.MissionState state = GetMissionState(mission);
+        if (MissionCoordinator.Instance == null)
+            return mission != null ? mission.offerGraph : null;
 
-        switch (state)
-        {
-            case KillArmedNPCMission.MissionState.NotStarted:
-                return mission.offerGraph;
-
-            case KillArmedNPCMission.MissionState.Active:
-                return mission.activeGraph != null ? mission.activeGraph : mission.offerGraph;
-
-            case KillArmedNPCMission.MissionState.ReadyToClaim:
-                return mission.readyToClaimGraph != null ? mission.readyToClaimGraph : mission.activeGraph;
-
-            case KillArmedNPCMission.MissionState.RewardClaimed:
-                if (mission.repeatable)
-                    return mission.completedGraph != null ? mission.completedGraph : mission.offerGraph;
-
-                return mission.completedGraph;
-
-            default:
-                return mission.offerGraph;
-        }
+        return MissionCoordinator.Instance.ResolveDialogueGraph(mission);
     }
 
     private void LockPlayer()
@@ -296,12 +273,12 @@ public class NPCMissionListUI : MonoBehaviour
 
         for (int i = 0; i < giver.Missions.Length; i++)
         {
-            NPCMissionEntry mission = giver.Missions[i];
+            MissionDefinition mission = giver.Missions[i];
 
             if (mission == null)
                 continue;
 
-            KillArmedNPCMission.MissionState state = GetMissionState(mission);
+            MissionRuntimeState state = GetMissionState(mission);
 
             if (!ShouldHideMission(mission, state))
                 return true;

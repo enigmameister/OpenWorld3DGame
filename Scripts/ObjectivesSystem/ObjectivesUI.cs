@@ -27,12 +27,6 @@ public class ObjectivesUI : MonoBehaviour
     [Header("Details")]
     [SerializeField] private ObjectiveDetailsUI detailsUI;
 
-    [Header("Known Missions")]
-    [SerializeField] private NPCMissionEntry testHouseMissionEntry;
-
-    [Header("Known Mission Graphs")]
-    [SerializeField] private DialogueGraph testHouseOfferGraph;
-
     [Header("Main List View")]
     [SerializeField] private GameObject mainScrollViewRoot;
     [SerializeField] private GameObject mainScrollbarRoot;
@@ -180,64 +174,11 @@ public class ObjectivesUI : MonoBehaviour
 
     private List<ObjectiveEntryData> CollectObjectives()
     {
-        List<ObjectiveEntryData> result = new();
+        if (MissionCoordinator.Instance == null)
+            return new List<ObjectiveEntryData>();
 
-        AddKillArmedNPCMission(result);
-
-        return result;
+        return MissionCoordinator.Instance.GetActiveObjectives();
     }
-
-    private void AddKillArmedNPCMission(List<ObjectiveEntryData> list)
-    {
-        if (KillArmedNPCMission.Instance == null)
-            return;
-
-        KillArmedNPCMission mission = KillArmedNPCMission.Instance;
-
-        if (mission.State == KillArmedNPCMission.MissionState.NotStarted)
-            return;
-
-        if (mission.State == KillArmedNPCMission.MissionState.RewardClaimed)
-            return;
-
-        string missionName = "Eliminate Armed NPCs";
-
-        string objective =
-            $"Eliminate armed NPCs: {mission.ArmedNpcScore}/{mission.requiredScore}";
-
-        string description = GetOfferGraphDescription(testHouseOfferGraph);
-
-        if (string.IsNullOrWhiteSpace(description))
-            description = "No mission description available.";
-
-        ObjectiveStatus status = ObjectiveStatus.InProgress;
-
-        if (mission.State == KillArmedNPCMission.MissionState.ReadyToClaim)
-            status = ObjectiveStatus.Finished;
-
-        bool canAbandon =
-            mission.State == KillArmedNPCMission.MissionState.Active ||
-            mission.State == KillArmedNPCMission.MissionState.ReadyToClaim;
-
-        list.Add(new ObjectiveEntryData(
-            "Mission_TestHouse",
-            missionName,
-            objective,
-            description,
-            status,
-            canAbandon,
-            () =>
-            {
-                KillArmedNPCMission.Instance.AbandonMission();
-            },
-            mission.ShowOnScreenTracker,
-            visible =>
-            {
-                KillArmedNPCMission.Instance.SetShowOnScreenTracker(visible);
-            }
-        ));
-    }
-
     private void RefreshScrollbarVisibility()
     {
         Canvas.ForceUpdateCanvases();
@@ -326,19 +267,6 @@ public class ObjectivesUI : MonoBehaviour
             return;
 
         BuildList();
-    }
-
-    private string GetOfferGraphDescription(DialogueGraph graph)
-    {
-        if (graph == null)
-            return "";
-
-        DialogueNode startNode = graph.GetNode(graph.startNodeId);
-
-        if (startNode == null)
-            return "";
-
-        return startNode.npcText;
     }
 
     public void SetMainListVisible(bool visible)

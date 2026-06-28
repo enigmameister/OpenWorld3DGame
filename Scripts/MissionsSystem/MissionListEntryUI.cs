@@ -16,7 +16,7 @@ public class MissionListEntryUI : MonoBehaviour, IPointerEnterHandler, IPointerE
     [SerializeField] private Color repeatableCompletedColor = new Color(0.25f, 0.6f, 1f);
     [SerializeField] private Color lockedColor = Color.gray;
 
-    private NPCMissionEntry mission;
+    private MissionDefinition mission;
     private NPCMissionListUI owner;
     private Color baseColor;
     private bool interactable = true;
@@ -39,31 +39,30 @@ public class MissionListEntryUI : MonoBehaviour, IPointerEnterHandler, IPointerE
             button.onClick.RemoveListener(Click);
     }
 
-    public void Setup(NPCMissionEntry entry, NPCMissionListUI listOwner, int index, KillArmedNPCMission.MissionState state)
+    public void Setup(MissionDefinition definition, NPCMissionListUI listOwner, int index, MissionRuntimeState state)
     {
-        mission = entry;
+        mission = definition;
         owner = listOwner;
 
         if (missionNameText != null)
-            missionNameText.text = $"{index + 1}. {entry.displayName}";
+            missionNameText.text = $"{index + 1}. {definition.title}";
 
         interactable = true;
-        baseColor = ResolveColor(entry, state);
+        baseColor = ResolveColor(definition, state);
         ApplyColor(baseColor);
 
         if (button != null)
             button.interactable = interactable;
     }
-
-    private Color ResolveColor(NPCMissionEntry entry, KillArmedNPCMission.MissionState state)
+    private Color ResolveColor(MissionDefinition definition, MissionRuntimeState state)
     {
-        if (state == KillArmedNPCMission.MissionState.ReadyToClaim)
+        if (state == MissionRuntimeState.ReadyToClaim)
             return readyToClaimColor;
 
-        if (state == KillArmedNPCMission.MissionState.RewardClaimed && entry.repeatable)
+        if (state == MissionRuntimeState.RewardClaimed && definition.repeatable)
             return repeatableCompletedColor;
 
-        if (state == KillArmedNPCMission.MissionState.RewardClaimed && !entry.repeatable)
+        if (state == MissionRuntimeState.RewardClaimed && !definition.repeatable)
             return lockedColor;
 
         return normalColor;

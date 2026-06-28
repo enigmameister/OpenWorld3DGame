@@ -1,7 +1,7 @@
 using TMPro;
 using UnityEngine;
 
-public class KillArmedNPCMission : MonoBehaviour
+public class KillArmedNPCMission : MonoBehaviour, IMissionRuntime
 {
     public static KillArmedNPCMission Instance { get; private set; }
 
@@ -41,6 +41,15 @@ public class KillArmedNPCMission : MonoBehaviour
     private string startCommunicateText =
         "Go find and eliminate armed NPCs, then return to the mission giver.";
 
+    [Header("Mission Definition")]
+    [SerializeField] private MissionDefinition definition;
+
+    public string MissionId =>
+        definition != null && !string.IsNullOrWhiteSpace(definition.missionId)
+            ? definition.missionId
+            : "Mission_TestHouse";
+
+    public MissionDefinition Definition => definition;
     public bool ShowOnScreenTracker => showOnScreenTracker;
 
     [Header("Debug")]
@@ -270,5 +279,82 @@ public class KillArmedNPCMission : MonoBehaviour
     {
         showOnScreenTracker = visible;
         RefreshUI();
+    }
+
+    public MissionRuntimeState RuntimeState
+    {
+        get
+        {
+            switch (state)
+            {
+                case MissionState.Active:
+                    return MissionRuntimeState.Active;
+
+                case MissionState.ReadyToClaim:
+                    return MissionRuntimeState.ReadyToClaim;
+
+                case MissionState.RewardClaimed:
+                    return MissionRuntimeState.RewardClaimed;
+
+                default:
+                    return MissionRuntimeState.NotStarted;
+            }
+        }
+    }
+
+    public ObjectiveEntryData BuildObjectiveEntry()
+    {
+        if (RuntimeState == MissionRuntimeState.NotStarted ||
+            RuntimeState == MissionRuntimeState.RewardClaimed)
+        {
+            return null;
+        }
+
+        string missionName = definition != null && !string.IsNullOrWhiteSpace(definition.title)
+            ? definition.title
+            : "Eliminate Armed NPCs";
+
+        string objective = definition != null && !string.IsNullOrWhiteSpace(definition.objectiveText)
+            ? $"{definition.objectiveText}: {armedNpcScore}/{requiredScore}"
+            : $"Eliminate armed NPCs: {armedNpcScore}/{requiredScore}";
+
+        string description = "";
+
+        if (definition != null)
+        {
+            if (definition.offerGraph != null)
+            {
+                DialogueNode startNode = definition.offerGraph.GetNode(definition.offerGraph.startNodeId);
+                if (startNode != null)
+                    description = startNode.npcText;
+            }
+
+            if (string.IsNullOrWhiteSpace(description))
+                description = definition.description;
+        }
+
+        if (string.IsNullOrWhiteSpace(description))
+            description = "No mission description available.";
+
+        ObjectiveStatus status = ObjectiveStatus.InProgress;
+
+        if (RuntimeState == MissionRuntimeState.ReadyToClaim)
+            status = ObjectiveStatus.Finished;
+
+        bool canAbandon =
+            RuntimeState == MissionRuntimeState.Active ||
+            RuntimeState == MissionRuntimeState.ReadyToClaim;
+
+        return new ObjectiveEntryData(
+            MissionId,
+            missionName,
+            objective,
+            description,
+            status,
+            canAbandon,
+            AbandonMission,
+            ShowOnScreenTracker,
+            SetShowOnScreenTracker
+        );
     }
 }
