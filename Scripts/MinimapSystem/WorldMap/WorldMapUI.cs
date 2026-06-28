@@ -1057,4 +1057,66 @@ public class WorldMapUI : MonoBehaviour
             minimapDashedRoute.HideRoute();
     }
 
+    public bool FollowGpsToTransform(Transform target, string debugName = "MISSION GPS")
+    {
+        if (target == null)
+        {
+            Debug.LogWarning("[WorldMapUI] FollowGpsToTransform target == null");
+            return false;
+        }
+
+        if (gpsPathfinder == null)
+        {
+            Debug.LogWarning("[WorldMapUI] gpsPathfinder == null");
+            return false;
+        }
+
+        Vector3 playerPos = GetGpsStartPosition();
+        Vector3 targetPos = target.position;
+
+        followedRaceEvent = null;
+
+        hasCustomGpsTarget = true;
+        hasPendingCustomGpsTarget = false;
+        customGpsTargetPosition = targetPos;
+        currentGpsTargetPoint = target;
+
+        bool success = RecalculateGpsRoute(playerPos, targetPos);
+
+        if (!success)
+        {
+            Debug.LogWarning("[WorldMapUI] Mission GPS path empty or too short.");
+
+            hasCustomGpsTarget = false;
+            currentGpsTargetPoint = null;
+
+            if (gpsDestinationMarker != null)
+                gpsDestinationMarker.Hide();
+
+            if (gpsUiDestinationMarker != null)
+                gpsUiDestinationMarker.Hide();
+
+            if (gpsHudArrow != null)
+                gpsHudArrow.Clear();
+
+            HideAllGpsPathRenderers();
+
+            return false;
+        }
+
+        if (gpsDestinationMarker != null)
+            gpsDestinationMarker.Show(currentGpsTargetPoint);
+
+        if (gpsUiDestinationMarker != null)
+            gpsUiDestinationMarker.Show(currentGpsTargetPoint);
+
+        Debug.Log("[WorldMapUI] Follow mission GPS: " + debugName);
+
+        return true;
+    }
+
+    public void ClearGpsPublic()
+    {
+        UnfollowGps();
+    }
 }

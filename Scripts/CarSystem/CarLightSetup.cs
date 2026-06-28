@@ -3,20 +3,17 @@
 public class CarLightSetup : MonoBehaviour
 {
     public GameObject headlightsRoot;
+
     private LightController lightController;
     private CarInteraction carInteraction;
-
     private bool lightsRegistered = false;
 
     void Start()
     {
-        // Wyłącz światła na starcie gry
         if (headlightsRoot != null)
         {
             foreach (var light in headlightsRoot.GetComponentsInChildren<Light>(true))
-            {
                 light.enabled = false;
-            }
         }
 
         lightController = Object.FindFirstObjectByType<LightController>();
@@ -29,7 +26,6 @@ public class CarLightSetup : MonoBehaviour
         }
     }
 
-
     void ActivateHeadlights()
     {
         Debug.Log("Włączam światła po wejściu do auta.");
@@ -40,15 +36,19 @@ public class CarLightSetup : MonoBehaviour
             lightsRegistered = true;
         }
 
-        if (lightController != null && headlightsRoot != null)
+        bool shouldBeOn = true;
+
+        if (lightController != null)
+            shouldBeOn = lightController.ShouldLightsBeOnNow();
+
+        if (headlightsRoot != null)
         {
-            bool shouldBeOn = lightController.ShouldLightsBeOnNow();
             foreach (var light in headlightsRoot.GetComponentsInChildren<Light>(true))
                 light.enabled = shouldBeOn;
         }
     }
 
-    void DeactivateHeadlights() 
+    void DeactivateHeadlights()
     {
         if (headlightsRoot != null)
         {
@@ -58,5 +58,4 @@ public class CarLightSetup : MonoBehaviour
             lightsRegistered = false;
         }
     }
-
 }

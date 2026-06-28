@@ -90,6 +90,22 @@ public class MissionCoordinator : MonoBehaviour
         GetRuntime(missionId)?.SetShowOnScreenTracker(visible);
     }
 
+    public DialogueGraph ResolveDialogueGraph(NPCMissionLink link)
+    {
+        if (link == null || link.definition == null)
+            return null;
+
+        if (link.role == MissionNpcRole.Receiver)
+        {
+            IMissionRuntime runtime = GetRuntime(link.definition.missionId);
+
+            if (runtime is DeliveryMissionRuntime deliveryRuntime)
+                return deliveryRuntime.ResolveReceiverGraph();
+        }
+
+        return ResolveDialogueGraph(link.definition);
+    }
+
     public DialogueGraph ResolveDialogueGraph(MissionDefinition definition)
     {
         if (definition == null)
@@ -103,7 +119,9 @@ public class MissionCoordinator : MonoBehaviour
                 return definition.offerGraph;
 
             case MissionRuntimeState.Active:
-                return definition.activeGraph != null ? definition.activeGraph : definition.offerGraph;
+                return definition.activeGraph != null
+                    ? definition.activeGraph
+                    : definition.offerGraph;
 
             case MissionRuntimeState.ReadyToClaim:
                 return definition.readyToClaimGraph != null

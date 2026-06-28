@@ -6,10 +6,10 @@ public class NPCMissionGiver : MonoBehaviour
     [SerializeField] private string npcName = "NPC NAME";
 
     [Header("Missions")]
-    [SerializeField] private MissionDefinition[] missions;
+    [SerializeField] private NPCMissionLink[] missions;
 
     public string NpcName => npcName;
-    public MissionDefinition[] Missions => missions;
+    public NPCMissionLink[] Missions => missions;
 
     public bool HasAnyMission()
     {

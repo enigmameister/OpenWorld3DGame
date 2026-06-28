@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: DG_RalphDelivery_Completed
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: 'The package is here.
+
+      Fredo already knows you did the job.'
+    options:
+    - playerText: Alright.
+      nextNodeId: end
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: end
+    npcText: Stay out of trouble.
+    options: []
+    endAfterNpcLine: 1
+  startNodeId: start

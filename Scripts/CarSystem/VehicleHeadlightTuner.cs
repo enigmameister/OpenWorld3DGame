@@ -2,14 +2,12 @@ using UnityEngine;
 
 public class VehicleHeadlightTuner : MonoBehaviour
 {
-    [Header("Low Beam")]
     public Light[] lowBeams;
     public float lowRange = 70f;
     public float lowIntensity = 7000f;
     public float lowInnerAngle = 18f;
     public float lowOuterAngle = 45f;
 
-    [Header("High Beam")]
     public Light[] highBeams;
     public float highRange = 140f;
     public float highIntensity = 18000f;

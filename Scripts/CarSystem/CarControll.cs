@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using System;
 
 [RequireComponent(typeof(Rigidbody))]
 public class CarControll : MonoBehaviour
@@ -101,6 +102,9 @@ public class CarControll : MonoBehaviour
     [Header("Gearbox")]
     public float shiftUpBuffer = 0f;
     public float shiftDownBuffer = 25f;
+
+    public event Action<int, int> OnGearShiftUp;
+    public event Action<int, int> OnGearShift;
 
     [Header("Shift smoothing")]
     public float shiftCooldown = 0.35f;
@@ -627,6 +631,8 @@ public class CarControll : MonoBehaviour
         if (newGear == currentGear)
             return;
 
+        int oldGear = currentGear;
+
         lastGear = currentGear;
         currentGear = newGear;
         shiftTimer = shiftCooldown;
@@ -634,6 +640,11 @@ public class CarControll : MonoBehaviour
         Vector3 localVel = GetLocalVelocity();
         localVel.z *= shiftSpeedDrop;
         rb.linearVelocity = transform.TransformDirection(localVel);
+
+        OnGearShift?.Invoke(oldGear, newGear);
+
+        if (newGear > oldGear)
+            OnGearShiftUp?.Invoke(oldGear, newGear);
     }
 
     void UpdateRpmForUI()

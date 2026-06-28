@@ -1,0 +1,36 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: DG_RalphDelivery_Waiting
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: 'You must be from Fredo.
+
+      Do you have the package?'
+    options:
+    - playerText: Yes, this is the package.
+      nextNodeId: delivered
+      debugEvent: Mission_FredoDelivery_DeliverToRalph
+    - playerText: Not yet.
+      nextNodeId: notyet
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: delivered
+    npcText: Good. I will let Fredo know the package arrived.
+    options: []
+    endAfterNpcLine: 1
+  - id: notyet
+    npcText: Then come back when you actually have it.
+    options: []
+    endAfterNpcLine: 1
+  startNodeId: start

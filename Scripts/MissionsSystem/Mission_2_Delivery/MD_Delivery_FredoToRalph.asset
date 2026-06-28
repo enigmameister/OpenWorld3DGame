@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 370cfe5cb7bafc447a72a079b64c9523, type: 3}
+  m_Name: MD_Delivery_FredoToRalph
+  m_EditorClassIdentifier: Assembly-CSharp::DeliveryMissionDefinition
+  missionId: Mission_Delivery_FredoToRalph
+  title: Delivery for Fredo
+  description: Fredo wants you to deliver a package to Ralph.
+  objectiveText: Deliver Fredo's package to Ralph.
+  rewardText: 500$
+  repeatable: 0
+  giveRewardOnlyOnce: 1
+  hideAfterCompleted: 1
+  offerGraph: {fileID: 11400000, guid: 6a122a082073d804286c2b9636a37efb, type: 2}
+  activeGraph: {fileID: 11400000, guid: 6a57678f72de8cd4b9b222338d24cf2c, type: 2}
+  readyToClaimGraph: {fileID: 11400000, guid: 9de85dc0ee7ae2c409e6620cf3fec828, type: 2}
+  completedGraph: {fileID: 11400000, guid: 218118157e20fef4f9f662523be978d7, type: 2}
+  packageItem: {fileID: 11400000, guid: 2b5b7b88bccf70d46a552c69360836b8, type: 2}
+  rewardMoney: 500
+  rewardAtReceiver: 0
+  acceptCommunicateText: Take the package to Ralph.
+  deliveredCommunicateText: Package delivered.
+  returnCommunicateText: Return to Fredo for your reward.
+  receiverWaitingGraph: {fileID: 11400000, guid: 5e21c4be8a5fbff41906807ee21f4bc6, type: 2}
+  receiverMissingPackageGraph: {fileID: 11400000, guid: 6bc4611f7d031fa48be471713b7d0d9a, type: 2}
+  receiverDeliveredGraph: {fileID: 11400000, guid: df689e7bf6bd0be4fb28f92b2cdab45e, type: 2}

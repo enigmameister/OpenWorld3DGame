@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: DG_DeliveryMission_Offer
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: 'Hey, you look like someone who can handle a simple job.
+
+      I have
+      a package that needs to reach Ralph. No questions, no delays.
+
+      Bring
+      it to him and you will get 500$.'
+    options:
+    - playerText: Sure, I'll deliver it.
+      nextNodeId: accepted
+      debugEvent: Mission_FredoDelivery_Accept
+    - playerText: I can't.
+      nextNodeId: declined
+      debugEvent: Mission_FredoDelivery_Decline
+    endAfterNpcLine: 0
+  - id: accepted
+    npcText: 'Okay, come back when you deliver Ralph my package... '
+    options: []
+    endAfterNpcLine: 1
+  - id: declined
+    npcText: Back if you change your mind...
+    options: []
+    endAfterNpcLine: 1
+  startNodeId: start

@@ -158,20 +158,20 @@ public class NPCMissionListUI : MonoBehaviour
 
         for (int i = 0; i < currentGiver.Missions.Length; i++)
         {
-            MissionDefinition mission = currentGiver.Missions[i];
+            NPCMissionLink link = currentGiver.Missions[i];
 
-            if (mission == null)
+            if (link == null || link.definition == null)
                 continue;
 
-            MissionRuntimeState state = GetMissionState(mission);
+            MissionRuntimeState state = GetMissionState(link);
 
-            if (ShouldHideMission(mission, state))
+            if (ShouldHideMission(link, state))
                 continue;
 
             MissionListEntryUI entry = Instantiate(entryPrefab, listRoot);
             entry.gameObject.SetActive(true);
 
-            entry.Setup(mission, this, visibleIndex, state);
+            entry.Setup(link, this, visibleIndex, state);
 
             spawnedEntries.Add(entry);
             visibleIndex++;
@@ -191,22 +191,24 @@ public class NPCMissionListUI : MonoBehaviour
         spawnedEntries.Clear();
     }
 
-    private MissionRuntimeState GetMissionState(MissionDefinition mission)
+    private MissionRuntimeState GetMissionState(NPCMissionLink link)
     {
-        if (MissionCoordinator.Instance == null || mission == null)
+        if (MissionCoordinator.Instance == null || link == null || link.definition == null)
             return MissionRuntimeState.NotStarted;
 
-        return MissionCoordinator.Instance.GetMissionState(mission.missionId);
+        return MissionCoordinator.Instance.GetMissionState(link.definition.missionId);
     }
 
-    private bool ShouldHideMission(MissionDefinition mission, MissionRuntimeState state)
+    private bool ShouldHideMission(NPCMissionLink link, MissionRuntimeState state)
     {
-        if (mission == null)
+        if (link == null || link.definition == null)
             return true;
 
+        MissionDefinition definition = link.definition;
+
         if (state == MissionRuntimeState.RewardClaimed &&
-            !mission.repeatable &&
-            mission.hideAfterCompleted)
+            !definition.repeatable &&
+            definition.hideAfterCompleted)
         {
             return true;
         }
@@ -214,17 +216,17 @@ public class NPCMissionListUI : MonoBehaviour
         return false;
     }
 
-    public void SelectMission(MissionDefinition mission)
+    public void SelectMission(NPCMissionLink link)
     {
-        if (mission == null)
+        if (link == null || link.definition == null)
             return;
 
-        DialogueGraph graph = ResolveGraph(mission);
+        DialogueGraph graph = ResolveGraph(link);
 
         if (graph == null)
         {
             if (debugLogs)
-                Debug.LogWarning($"[NPCMissionListUI] No graph for mission: {mission.title}");
+                Debug.LogWarning($"[NPCMissionListUI] No graph for mission: {link.definition.title}");
 
             return;
         }
@@ -238,12 +240,35 @@ public class NPCMissionListUI : MonoBehaviour
             interactor.OpenDialogueGraphDirect(graph, giver != null ? giver.NpcName : "NPC");
     }
 
-    private DialogueGraph ResolveGraph(MissionDefinition mission)
+    private DialogueGraph ResolveGraph(NPCMissionLink link)
     {
         if (MissionCoordinator.Instance == null)
-            return mission != null ? mission.offerGraph : null;
+            return link != null && link.definition != null
+                ? link.definition.offerGraph
+                : null;
 
-        return MissionCoordinator.Instance.ResolveDialogueGraph(mission);
+        return MissionCoordinator.Instance.ResolveDialogueGraph(link);
+    }
+
+    public bool HasVisibleMissions(NPCMissionGiver giver)
+    {
+        if (giver == null || giver.Missions == null)
+            return false;
+
+        for (int i = 0; i < giver.Missions.Length; i++)
+        {
+            NPCMissionLink link = giver.Missions[i];
+
+            if (link == null || link.definition == null)
+                continue;
+
+            MissionRuntimeState state = GetMissionState(link);
+
+            if (!ShouldHideMission(link, state))
+                return true;
+        }
+
+        return false;
     }
 
     private void LockPlayer()
@@ -266,24 +291,5 @@ public class NPCMissionListUI : MonoBehaviour
         Cursor.lockState = CursorLockMode.Locked;
     }
 
-    public bool HasVisibleMissions(NPCMissionGiver giver)
-    {
-        if (giver == null || giver.Missions == null)
-            return false;
 
-        for (int i = 0; i < giver.Missions.Length; i++)
-        {
-            MissionDefinition mission = giver.Missions[i];
-
-            if (mission == null)
-                continue;
-
-            MissionRuntimeState state = GetMissionState(mission);
-
-            if (!ShouldHideMission(mission, state))
-                return true;
-        }
-
-        return false;
-    }
 }

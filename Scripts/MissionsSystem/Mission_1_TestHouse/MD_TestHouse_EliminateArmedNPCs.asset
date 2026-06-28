@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7a5ace65799c0994c953de84a0b806ea, type: 3}
+  m_Name: MD_TestHouse_EliminateArmedNPCs
+  m_EditorClassIdentifier: Assembly-CSharp::MissionDefinition
+  missionId: Mission_TestHouse
+  title: Eliminate Armed NPCs
+  description: 
+  objectiveText: Eliminate armed NPCs
+  rewardText: Access to hideout
+  repeatable: 0
+  giveRewardOnlyOnce: 1
+  hideAfterCompleted: 1
+  offerGraph: {fileID: 11400000, guid: 6e7f4937b4a83ec499f4fcb69760e675, type: 2}
+  activeGraph: {fileID: 11400000, guid: 2db095f8b3287ef45aaf9ddd62f9ab43, type: 2}
+  readyToClaimGraph: {fileID: 11400000, guid: 977f5db7fc4fa364698479ae4ad52873, type: 2}
+  completedGraph: {fileID: 11400000, guid: f7874cd0bf286fb418cdf850f245893a, type: 2}

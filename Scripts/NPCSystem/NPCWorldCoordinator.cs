@@ -477,7 +477,7 @@ public class NPCWorldCoordinator : MonoBehaviour
         }
 
         Vector3 targetPos = NPCPlayerTargetUtility.GetTargetPosition(player);
-        float dist = Vector3.Distance(entry.transform.position, targetPos);
+        float sqrDist = (entry.transform.position - targetPos).sqrMagnitude;
 
         bool provoked = IsProvoked(entry);
 
@@ -490,14 +490,25 @@ public class NPCWorldCoordinator : MonoBehaviour
             simpleDist *= provokedDistanceMultiplier;
         }
 
+        float fullSqr = fullDist * fullDist;
+        float simpleSqr = simpleDist * simpleDist;
+
         NPCLodState targetState;
 
-        if (dist <= fullDist)
+        if (sqrDist <= fullSqr)
+        {
             targetState = NPCLodState.Full;
-        else if (dist <= simpleDist)
+        }
+        else if (sqrDist <= simpleSqr)
+        {
             targetState = NPCLodState.Simple;
+        }
         else
-            targetState = NPCLodState.Sleeping;
+        {
+            targetState = IsImportantNPC(entry)
+                ? NPCLodState.Simple
+                : NPCLodState.Sleeping;
+        }
 
         ApplyLod(entry, targetState);
     }
@@ -824,19 +835,40 @@ public class NPCWorldCoordinator : MonoBehaviour
                $"Combat={CountAliveCombatNPCs()}/{globalMaxCombatNPCs}";
     }
 
+    private bool IsImportantNPC(NPCEntry entry)
+    {
+        if (entry == null || entry.core == null)
+            return false;
+
+        return entry.core.Importance == NPCCore.NPCImportance.Mission ||
+               entry.core.Importance == NPCCore.NPCImportance.StoryCritical;
+    }
+
 #if UNITY_EDITOR
     private void OnDrawGizmosSelected()
     {
-        if (!drawGizmos) return;
+        if (!drawGizmos)
+            return;
+
+        Vector3 center = transform.position;
+
+        if (player != null)
+            center = player.position;
+        else
+        {
+            GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
+            if (playerGo != null)
+                center = playerGo.transform.position;
+        }
 
         Gizmos.color = Color.green;
-        Gizmos.DrawWireSphere(transform.position, fullDistance);
+        Gizmos.DrawWireSphere(center, fullDistance);
 
         Gizmos.color = Color.yellow;
-        Gizmos.DrawWireSphere(transform.position, simpleDistance);
+        Gizmos.DrawWireSphere(center, simpleDistance);
 
         Gizmos.color = Color.gray;
-        Gizmos.DrawWireSphere(transform.position, sleepDistance);
+        Gizmos.DrawWireSphere(center, sleepDistance);
     }
 #endif
 }
