@@ -1,0 +1,45 @@
+using System;
+
+public enum ObjectiveStatus
+{
+    InProgress,
+    Finished,
+    Failed
+}
+
+public class ObjectiveEntryData
+{
+    public string missionId;
+    public string missionName;
+    public string objectiveText;
+    public string descriptionText;
+    public ObjectiveStatus status;
+
+    public bool canAbandon;
+    public Action onAbandon;
+
+    public bool screenVisible;
+    public Action<bool> onScreenVisibleChanged;
+
+    public ObjectiveEntryData(
+        string missionId,
+        string missionName,
+        string objectiveText,
+        string descriptionText,
+        ObjectiveStatus status,
+        bool canAbandon,
+        Action onAbandon,
+        bool screenVisible,
+        Action<bool> onScreenVisibleChanged)
+    {
+        this.missionId = missionId;
+        this.missionName = missionName;
+        this.objectiveText = objectiveText;
+        this.descriptionText = descriptionText;
+        this.status = status;
+        this.canAbandon = canAbandon;
+        this.onAbandon = onAbandon;
+        this.screenVisible = screenVisible;
+        this.onScreenVisibleChanged = onScreenVisibleChanged;
+    }
+}
