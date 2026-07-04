@@ -476,6 +476,12 @@ public class NPCWorldCoordinator : MonoBehaviour
             return;
         }
 
+        if (IsProtectedNPC(entry))
+        {
+            ApplyLod(entry, NPCLodState.Full);
+            return;
+        }
+
         Vector3 targetPos = NPCPlayerTargetUtility.GetTargetPosition(player);
         float sqrDist = (entry.transform.position - targetPos).sqrMagnitude;
 
@@ -775,6 +781,12 @@ public class NPCWorldCoordinator : MonoBehaviour
         if (entry == null || entry.root == null)
             return;
 
+        if (IsProtectedNPC(entry))
+        {
+            entry.farFromPlayerSince = -1f;
+            return;
+        }
+
         if (entry.core == null)
             return;
 
@@ -842,6 +854,29 @@ public class NPCWorldCoordinator : MonoBehaviour
 
         return entry.core.Importance == NPCCore.NPCImportance.Mission ||
                entry.core.Importance == NPCCore.NPCImportance.StoryCritical;
+    }
+
+    private bool IsProtectedNPC(NPCEntry entry)
+    {
+        if (entry == null || entry.root == null)
+            return false;
+
+        if (entry.core != null)
+        {
+            if (entry.core.Importance == NPCCore.NPCImportance.Mission ||
+                entry.core.Importance == NPCCore.NPCImportance.StoryCritical)
+            {
+                return true;
+            }
+        }
+
+        if (entry.root.GetComponentInChildren<NPCMissionGiver>(true) != null)
+            return true;
+
+        if (entry.root.GetComponentInChildren<BankEmployee>(true) != null)
+            return true;
+
+        return false;
     }
 
 #if UNITY_EDITOR

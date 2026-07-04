@@ -304,11 +304,18 @@ public class DialogueGraphUI : MonoBehaviour
     private bool EnsureWindow()
     {
         if (window == null)
-            window = FindFirstObjectByType<DialogueWindowUI>(FindObjectsInactive.Include);
+            window = GetComponent<DialogueWindowUI>();
+
+        if (window == null)
+            window = GetComponentInChildren<DialogueWindowUI>(true);
 
         if (window == null)
         {
-            Debug.LogWarning("[DialogueGraphUI] DialogueWindowUI missing.");
+            Debug.LogWarning(
+                "[DialogueGraphUI] DialogueWindowUI missing. " +
+                "Assign the normal Root_DialogueUI / DialogueWindowUI manually."
+            );
+
             return false;
         }
 

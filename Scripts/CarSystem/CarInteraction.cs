@@ -93,7 +93,23 @@ public class CarInteraction : MonoBehaviour
 
     public event System.Action OnEnterCar;
     public event System.Action OnExitCar;
+
+    public static event System.Action<CarInteraction> OnAnyPlayerEnteredCar;
+    public static event System.Action<CarInteraction> OnAnyPlayerExitedCar;
+
     public static Transform ActiveVehicleTransform { get; private set; }
+    public static CarInteraction ActiveCarInteraction { get; private set; }
+
+    public bool IsPlayerInThisCar => isInCar;
+
+    public Transform VehicleRoot =>
+        carObject != null ? carObject.transform : transform;
+
+    public Transform VehicleEnterTarget =>
+        transform;
+
+    public Transform VehicleExitPoint =>
+        exitPoint != null ? exitPoint : transform;
 
     [Header("Race UI")]
     [SerializeField] private GameObject carRaceUiRoot;
@@ -403,7 +419,11 @@ public class CarInteraction : MonoBehaviour
         SetupHud(controller);
 
         isBusy = false;
+
+        ActiveCarInteraction = this;
+
         OnEnterCar?.Invoke();
+        OnAnyPlayerEnteredCar?.Invoke(this);
     }
 
     IEnumerator ExitCarRoutine()
@@ -426,7 +446,7 @@ public class CarInteraction : MonoBehaviour
 
         isInCar = false;
 
-        if (ActiveVehicleTransform == carObject.transform)
+        if (carObject != null && ActiveVehicleTransform == carObject.transform)
             ActiveVehicleTransform = null;
 
         if (playerObject != null)
@@ -492,7 +512,12 @@ public class CarInteraction : MonoBehaviour
             carDestructible.AssignPlayerRef(null);
 
         isBusy = false;
+
+        if (ActiveCarInteraction == this)
+            ActiveCarInteraction = null;
+
         OnExitCar?.Invoke();
+        OnAnyPlayerExitedCar?.Invoke(this);
     }
 
     void EnableFreelockFromCurrentCamera()

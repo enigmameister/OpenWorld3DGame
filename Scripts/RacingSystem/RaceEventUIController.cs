@@ -6,7 +6,21 @@ public class RaceEventUIController : MonoBehaviour
 
     public void OnPlayPressed()
     {
-        if (CarRaceManager.ActiveRaceManager == null) return;
+        if (MissionCoordinator.Instance != null &&
+            MissionCoordinator.Instance.HasAnyMissionInProgress(includeReadyToClaim: true))
+        {
+            if (CommunicateUI.Instance != null)
+                CommunicateUI.Instance.Show("You need to finish your current mission first.", 4f);
+
+            if (CarRaceManager.ActiveRaceManager != null)
+                CarRaceManager.ActiveRaceManager.CancelRaceEventPanel();
+
+            return;
+        }
+
+        if (CarRaceManager.ActiveRaceManager == null)
+            return;
+
         CarRaceManager.ActiveRaceManager.ConfirmRaceStart();
     }
 

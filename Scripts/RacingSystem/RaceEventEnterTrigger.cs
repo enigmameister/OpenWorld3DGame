@@ -11,6 +11,13 @@ public class RaceEventEnterTrigger : MonoBehaviour
     private CarControll currentCar;
     private Collider triggerCollider;
 
+    [Header("Mission Block")]
+    [SerializeField] private bool blockRaceWhenMissionActive = true;
+    [SerializeField] private string missionActiveMessage = "You need to finish your current mission first.";
+    [SerializeField] private float missionMessageCooldown = 2f;
+
+    private float nextMissionMessageTime;
+
     void Awake()
     {
         triggerCollider = GetComponent<Collider>();
@@ -36,6 +43,13 @@ public class RaceEventEnterTrigger : MonoBehaviour
         if (raceManager == null) return;
 
         currentCar = car;
+
+        if (HasBlockingMission())
+        {
+            raceManager.ShowEnterRaceUI(false);
+            return;
+        }
+
         raceManager.ShowEnterRaceUI(true);
     }
 
@@ -71,6 +85,18 @@ public class RaceEventEnterTrigger : MonoBehaviour
             return;
         }
 
+        if (HasBlockingMission())
+        {
+            raceManager.ShowEnterRaceUI(false);
+
+            if (Input.GetKeyDown(openKey))
+                ShowMissionBlockMessage();
+
+            return;
+        }
+
+        raceManager.ShowEnterRaceUI(true);
+
         if (Input.GetKeyDown(openKey))
             raceManager.OpenRaceEventPanel(currentCar);
     }
@@ -91,5 +117,27 @@ public class RaceEventEnterTrigger : MonoBehaviour
         float closestDistance = Vector3.Distance(closest, currentCar.transform.position);
 
         return closestDistance < 1.5f;
+    }
+
+    private bool HasBlockingMission()
+    {
+        if (!blockRaceWhenMissionActive)
+            return false;
+
+        if (MissionCoordinator.Instance == null)
+            return false;
+
+        return MissionCoordinator.Instance.HasAnyMissionInProgress(includeReadyToClaim: true);
+    }
+
+    private void ShowMissionBlockMessage()
+    {
+        if (Time.time < nextMissionMessageTime)
+            return;
+
+        nextMissionMessageTime = Time.time + missionMessageCooldown;
+
+        if (CommunicateUI.Instance != null)
+            CommunicateUI.Instance.Show(missionActiveMessage, 4f);
     }
 }

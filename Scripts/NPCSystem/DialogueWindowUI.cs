@@ -12,6 +12,14 @@ public class DialogueWindowUI : MonoBehaviour
     [Header("Root")]
     [SerializeField] private GameObject root;
 
+    [Header("Fade")]
+    [SerializeField] private CanvasGroup rootCanvasGroup;
+    [SerializeField] private bool useFade = false;
+    [SerializeField] private float fadeInTime = 0.15f;
+    [SerializeField] private float fadeOutTime = 0.25f;
+
+    private Coroutine fadeCoroutine;
+
     [Header("Main Text")]
     [SerializeField] private TMP_Text speakerNameText;
     [SerializeField] private TMP_Text currentLineText;
@@ -58,6 +66,12 @@ public class DialogueWindowUI : MonoBehaviour
     [SerializeField] private bool lockPlayerDuringDialogue = true;
     [SerializeField] private bool disableWeaponManagerDuringDialogue = true;
 
+    [Header("Ride / Minimal Mode")]
+    [SerializeField] private bool useHistory = true;
+    [SerializeField] private GameObject historyLineViewport;
+    [SerializeField] private bool allowManualCurrentLineScroll = true;
+    [SerializeField] private bool hideCurrentLineScrollbarWhenManualDisabled = true;
+
     public bool IsOpen { get; private set; }
     public bool IsTyping => isTyping;
 
@@ -92,6 +106,12 @@ public class DialogueWindowUI : MonoBehaviour
         if (root == null)
             root = gameObject;
 
+        if (rootCanvasGroup == null && root != null)
+            rootCanvasGroup = root.GetComponent<CanvasGroup>();
+
+        if (historyLineViewport != null)
+            historyLineViewport.SetActive(useHistory);
+
         if (currentLineText != null)
         {
             currentLineText.richText = true;
@@ -106,6 +126,7 @@ public class DialogueWindowUI : MonoBehaviour
                 ? currentLineScroll.viewport
                 : currentLineScroll.GetComponent<RectTransform>();
         }
+
 
         if (historyText != null)
             historyText.richText = true;
@@ -148,16 +169,29 @@ public class DialogueWindowUI : MonoBehaviour
         if (root != null)
             root.SetActive(true);
 
+        if (rootCanvasGroup != null)
+        {
+            if (useFade)
+                FadeIn();
+            else
+                rootCanvasGroup.alpha = 1f;
+        }
+
+        if (historyLineViewport != null)
+            historyLineViewport.SetActive(useHistory);
+
         HideOptions();
 
         if (clearHistory)
             ClearHistory();
 
         if (lockPlayer)
+        {
             LockPlayer();
 
-        Cursor.visible = true;
-        Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
+        }
     }
 
     public void CloseWindow(bool unlockPlayer = true)
@@ -195,6 +229,30 @@ public class DialogueWindowUI : MonoBehaviour
             UnlockPlayer();
     }
 
+    public void CloseWindowWithFade(bool unlockPlayer = true)
+    {
+        bool wasOpen = IsOpen;
+
+        StopTyping();
+
+        IsOpen = false;
+
+        HideOptions();
+
+        if (unlockPlayer)
+            UnlockPlayer();
+
+        FadeOut();
+
+        if (wasOpen)
+            Closed?.Invoke();
+    }
+
+    public void SetVisualVisibleOnly(bool visible)
+    {
+        if (root != null)
+            root.SetActive(visible);
+    }
     public void ClearHistory()
     {
         historyLines.Clear();
@@ -217,6 +275,8 @@ public class DialogueWindowUI : MonoBehaviour
 
         userLockedCurrentLineScroll = false;
         currentLineScrollbarHeld = false;
+        topLineIndex = 0;
+        currentLineTargetNorm = 1f;
 
         if (resumeAutoScrollCoroutine != null)
         {
@@ -250,6 +310,7 @@ public class DialogueWindowUI : MonoBehaviour
             }
 
             PushHistoryLine(speaker, fullCurrentText);
+
             pendingTypeDone = null;
             onDone?.Invoke();
             return;
@@ -457,6 +518,9 @@ public class DialogueWindowUI : MonoBehaviour
 
     private void PushHistoryLine(string speaker, string line)
     {
+        if (!useHistory)
+            return;
+
         if (historyText == null)
             return;
 
@@ -842,10 +906,21 @@ public class DialogueWindowUI : MonoBehaviour
         if (currentLineScrollbar == null)
             currentLineScrollbar = currentLineScroll.verticalScrollbar;
 
-        if (currentLineScrollbar == null)
+        if (currentLineScrollbar != null)
+        {
+            currentLineScroll.verticalScrollbar = currentLineScrollbar;
+
+            currentLineScrollbar.interactable = allowManualCurrentLineScroll;
+
+            if (!allowManualCurrentLineScroll && hideCurrentLineScrollbarWhenManualDisabled)
+                currentLineScrollbar.gameObject.SetActive(false);
+        }
+
+        if (!allowManualCurrentLineScroll)
             return;
 
-        currentLineScroll.verticalScrollbar = currentLineScrollbar;
+        if (currentLineScrollbar == null)
+            return;
 
         EventTrigger trigger = currentLineScrollbar.GetComponent<EventTrigger>();
 
@@ -896,5 +971,60 @@ public class DialogueWindowUI : MonoBehaviour
 
         int reveal = Mathf.Clamp(currentRevealedCount, 0, fullCurrentText.Length);
         UpdateCurrentLineFollowTarget(reveal);
+    }
+
+    public void FadeIn()
+    {
+        if (!useFade || rootCanvasGroup == null)
+            return;
+
+        if (fadeCoroutine != null)
+            StopCoroutine(fadeCoroutine);
+
+        fadeCoroutine = StartCoroutine(CoFade(1f, fadeInTime, keepActiveAfter: true));
+    }
+
+    public void FadeOut()
+    {
+        if (!useFade || rootCanvasGroup == null)
+        {
+            if (root != null)
+                root.SetActive(false);
+
+            return;
+        }
+
+        if (fadeCoroutine != null)
+            StopCoroutine(fadeCoroutine);
+
+        fadeCoroutine = StartCoroutine(CoFade(0f, fadeOutTime, keepActiveAfter: false));
+    }
+
+    private IEnumerator CoFade(float target, float duration, bool keepActiveAfter)
+    {
+        if (root != null)
+            root.SetActive(true);
+
+        float start = rootCanvasGroup.alpha;
+        float timer = 0f;
+
+        duration = Mathf.Max(0.01f, duration);
+
+        while (timer < duration)
+        {
+            timer += Time.unscaledDeltaTime;
+            float t = Mathf.Clamp01(timer / duration);
+
+            rootCanvasGroup.alpha = Mathf.Lerp(start, target, t);
+
+            yield return null;
+        }
+
+        rootCanvasGroup.alpha = target;
+
+        if (!keepActiveAfter && root != null)
+            root.SetActive(false);
+
+        fadeCoroutine = null;
     }
 }

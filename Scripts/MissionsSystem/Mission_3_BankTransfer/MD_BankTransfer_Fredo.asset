@@ -1,0 +1,40 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d6bda6b03058f5c4c9663d70513f39f2, type: 3}
+  m_Name: MD_BankTransfer_Fredo
+  m_EditorClassIdentifier: Assembly-CSharp::BankTransferMissionDefinition
+  missionId: Mission_Fredo_BankTransfer
+  title: Bank Transfer
+  description: Fredo cannot enter the bank because of problems with the police. He
+    needs you to transfer $1500 to account number 1993. If you do not have a bank
+    account yet, open one first.
+  objectiveText: Transfer $1500 to account 1993.
+  rewardText: Glock
+  repeatable: 0
+  giveRewardOnlyOnce: 1
+  hideAfterCompleted: 1
+  offerGraph: {fileID: 11400000, guid: 4d4b27c4d04664a49874933ff27a1da6, type: 2}
+  activeGraph: {fileID: 11400000, guid: 46b5923e75b63a44db14b48eb56b9870, type: 2}
+  readyToClaimGraph: {fileID: 11400000, guid: f21f6c24fc6b44f4a87452a8d1ab97b5, type: 2}
+  completedGraph: {fileID: 11400000, guid: 4be9f57a42c275743902d75a63a52dd8, type: 2}
+  requiredCompletedMissions:
+  - {fileID: 11400000, guid: b2da68d7652d947489dcdddb2f725eda, type: 2}
+  hideUntilPrerequisitesCompleted: 1
+  targetAccountId: 1993
+  requiredAmount: 1500
+  createTargetAccountIfMissing: 1
+  rewardItem: {fileID: 11400000, guid: ff851626be1beff44a24d4868a1816a1, type: 2}
+  rewardItemCount: 1
+  acceptText: Open a bank account and transfer $1500 to account 1993.
+  accountMissingText: Open a bank account first.
+  transferDoneText: Transfer complete. Return to Fredo.
+  rewardTextAfterClaim: Fredo gave you a Glock.

@@ -14,10 +14,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::NPCProfile
   displayName: Bank Teller
   archetype: 1
-  importance: 0
+  importance: 2
   maxHP: 100
-  invulnerable: 0
-  preventDeath: 0
+  invulnerable: 1
+  preventDeath: 1
   useNPCController: 1
   reactionType: 0
   fighterVariant: 0

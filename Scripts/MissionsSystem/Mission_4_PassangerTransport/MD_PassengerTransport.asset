@@ -1,0 +1,106 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8ab113f300265d8469279fbfc21e6136, type: 3}
+  m_Name: MD_PassengerTransport
+  m_EditorClassIdentifier: Assembly-CSharp::PassengerTransportMissionDefinition
+  missionId: Mission_Fredo_PassengerTransport
+  title: Transporter
+  description: Fredo wants you to pick up Wolf by car and drive them to the marked
+    location.
+  objectiveText: Drive Wolf to the destination.
+  rewardText: 500$
+  repeatable: 0
+  giveRewardOnlyOnce: 1
+  hideAfterCompleted: 1
+  offerGraph: {fileID: 11400000, guid: b9de24712c4695d49bc14106b6115f3a, type: 2}
+  activeGraph: {fileID: 11400000, guid: 41c9ab5ea20504c44b5b9fa8d2c900c2, type: 2}
+  readyToClaimGraph: {fileID: 11400000, guid: 3d7db8e513ba549468b5c9252d265cb3, type: 2}
+  completedGraph: {fileID: 11400000, guid: c0ca5fbb839083e4dbc02b11d3e22eaa, type: 2}
+  requiredCompletedMissions: []
+  hideUntilPrerequisitesCompleted: 0
+  passengerDisplayName: Passenger
+  usePassengerNpcName: 1
+  rewardMoney: 500
+  rewardItem: {fileID: 0}
+  rewardItemCount: 1
+  rewardDisplayText: $500
+  rewardAtDestination: 0
+  pickupGpsLabelFormat: Pick up Wolf
+  destinationGpsLabelFormat: Drive Wolf to the destination
+  returnGpsLabelFormat: Return to Fredo
+  needCarObjectiveFormat: Find a car.
+  driveToPassengerObjectiveFormat: Drive to Wolf.
+  waitForPassengerObjectiveFormat: Stop near Wolf and wait for them to get in.
+  driveToDestinationObjectiveFormat: Drive Wolf to the marked location.
+  playerLeftCarObjectiveFormat: Get back in the car to continue.
+  passengerWalkingAwayObjectiveFormat: Wait until Wolf  reaches the safe place.
+  returnObjectiveFormat: Return to Fredo for your reward.
+  acceptTextFormat: Find a car first.
+  enteredCarTextFormat: Drive to Wolf.
+  passengerBoardedTextFormat: Wolf got in. Drive to the marked location.
+  playerLeftCarTextFormat: Get back in the car to continue.
+  playerNeedsAnotherCarTextFormat: Find another car to continue.
+  arrivedTextFormat: "This is it. Thanks for the ride. I hope we meet again \u2014
+    maybe next time I'll show you around the city."
+  returnTextFormat: Return to Fredo for your reward.
+  rewardTextAfterClaimFormat: Fredo gave you your reward.
+  noRewardTextAfterClaimFormat: Mission completed.
+  rideLines:
+  - speaker: 1
+    customSpeakerName: 
+    text: Are you Wolf? Fredo sent me to pick you up.
+    delayAfterPrevious: 0
+  - speaker: 0
+    customSpeakerName: 
+    text: Yeah, that's me. Fredo told me someone would come. Good timing.
+    delayAfterPrevious: 0
+  - speaker: 0
+    customSpeakerName: 
+    text: I need to get home fast. I'm already late.
+    delayAfterPrevious: 0
+  - speaker: 0
+    customSpeakerName: 
+    text: So, are you new in town?
+    delayAfterPrevious: 0
+  - speaker: 1
+    customSpeakerName: 
+    text: 'Yeah. I moved here from the north, looking for a new adventure. Maybe
+      start a business, see the world a little.
+
+'
+    delayAfterPrevious: 0
+  - speaker: 0
+    customSpeakerName: 
+    text: Sounds good. I've lived in this city since I was a kid. I know Fredo for
+      a long time.
+    delayAfterPrevious: 0
+  - speaker: 0
+    customSpeakerName: 
+    text: I know this city pretty well. The people, the streets, the places you should
+      visit... and the places you should avoid.
+    delayAfterPrevious: 0
+  - speaker: 1
+    customSpeakerName: 
+    text: What was that building I picked you up from?
+    delayAfterPrevious: 3
+  - speaker: 0
+    customSpeakerName: 
+    text: "Ahh that's NSG \u2014 Notability Soft Guard. They work on modern security
+      systems, detection tech, surveillance tools... that kind of thing."
+    delayAfterPrevious: 3.5
+  - speaker: 0
+    customSpeakerName: 
+    text: It's a job like any other, but I can't tell you too much. Professional
+      secrecy, you know.
+    delayAfterPrevious: 3.5
+  passengerLineWhenPlayerLeavesCar: Why are you getting out? We're not there yet.
+    Get back in the car.

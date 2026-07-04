@@ -2931,6 +2931,16 @@ public class CarRaceManager : MonoBehaviour
 
     public void OpenRaceEventPanel(CarControll car)
     {
+        if (MissionCoordinator.Instance != null &&
+              MissionCoordinator.Instance.HasAnyMissionInProgress(includeReadyToClaim: true))
+        {
+            if (CommunicateUI.Instance != null)
+                CommunicateUI.Instance.Show("You need to finish your current mission first.", 4f);
+
+            ShowEnterRaceUI(false);
+            return;
+        }
+
         ApplyRaceEventDefinition();
 
         if (car == null) return;

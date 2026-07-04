@@ -1,0 +1,39 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: DG_BankTransfer_Offer
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: "Listen, I have a special job for you. I cannot walk into the bank myself
+      \u2014 the police are watching too closely. I need you to transfer $1500 to
+      account number 1993. If you do not have a bank account yet, open one first.
+      Do this for me, and I will give you something that will help you feel safer
+      in this city, especially at night out in the fields."
+    options:
+    - playerText: I'll do it.
+      nextNodeId: accepted
+      debugEvent: Mission_FredoBankTransfer_Accept
+    - playerText: Not right now.
+      nextNodeId: declined
+      debugEvent: Mission_FredoBankTransfer_Decline
+    endAfterNpcLine: 0
+  - id: accepted
+    npcText: 'Good. Remember: $1500 to account 1993. If you do not have an account,
+      open one at the bank first. Come back when the transfer is done.'
+    options: []
+    endAfterNpcLine: 1
+  - id: declined
+    npcText: Fine. But this kind of offer does not wait forever.
+    options: []
+    endAfterNpcLine: 1
+  startNodeId: start

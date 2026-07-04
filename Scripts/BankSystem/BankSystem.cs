@@ -93,6 +93,7 @@ public struct CloseAccountCheckResult
 public class BankSystem : MonoBehaviour
 {
     public static BankSystem Instance { get; private set; }
+    public static event System.Action<int, int, int> OnTransferCompleted;
 
     [Header("Rules")]
     [SerializeField] private bool strictCardRegistry = true;
@@ -1284,10 +1285,26 @@ public class BankSystem : MonoBehaviour
         from.balance -= amount;
         to.balance += amount;
 
-        AddTransactionRecord(fromAccountId, toAccountId, "", amount, BankTransactionType.TransferOut);
-        AddTransactionRecord(toAccountId, fromAccountId, "", amount, BankTransactionType.TransferIn);
+        AddTransactionRecord(
+            fromAccountId,
+            toAccountId,
+            "",
+            amount,
+            BankTransactionType.TransferOut
+        );
+
+        AddTransactionRecord(
+            toAccountId,
+            fromAccountId,
+            "",
+            amount,
+            BankTransactionType.TransferIn
+        );
 
         MarkDirty();
+
+        OnTransferCompleted?.Invoke(fromAccountId, toAccountId, amount);
+
         return true;
     }
 
@@ -1326,26 +1343,11 @@ public class BankSystem : MonoBehaviour
 
         return count;
     }
-
-
     public bool AccountExists(int accountId) => _accounts.ContainsKey(accountId);
 
     public bool TransferNoFee(int fromAccountId, int toAccountId, int amount)
     {
-        if (amount <= 0) return false;
-        if (fromAccountId == toAccountId) return false;
-
-        if (!_accounts.TryGetValue(fromAccountId, out var from)) return false;
-        if (!_accounts.TryGetValue(toAccountId, out var to)) return false;
-        if (from.locked || to.locked) return false;
-
-        if (from.balance < amount) return false;
-
-        from.balance -= amount;
-        to.balance += amount;
-
-        MarkDirty();
-        return true;
+        return TransferBetweenAccounts(fromAccountId, toAccountId, amount);
     }
 
 #if UNITY_EDITOR

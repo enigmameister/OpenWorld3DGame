@@ -1,16 +1,21 @@
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 public class NpcBarkUI : MonoBehaviour
 {
+    [Header("Layout Fix")]
+    [SerializeField] private RectTransform contentRoot;
+    [SerializeField] private bool forceTextWrapping = true;
+    [SerializeField] private float minRowHeight = 60f;
+
     [System.Serializable]
     private class BarkSlot
     {
         public GameObject rowRoot;
         public TMP_Text nameText;
         public TMP_Text lineText;
-
         public void SetActive(bool on)
         {
             if (rowRoot != null)
@@ -81,12 +86,17 @@ public class NpcBarkUI : MonoBehaviour
     {
         gameObject.SetActive(true);
 
+        if (contentRoot == null)
+            contentRoot = transform.Find("Dialog/Content") as RectTransform;
+
+        PrepareAllTextFields();
+
         slots = new BarkSlot[]
         {
-            new BarkSlot { rowRoot = row1, nameText = name1, lineText = text1 },
-            new BarkSlot { rowRoot = row2, nameText = name2, lineText = text2 },
-            new BarkSlot { rowRoot = row3, nameText = name3, lineText = text3 },
-            new BarkSlot { rowRoot = row4, nameText = name4, lineText = text4 },
+        new BarkSlot { rowRoot = row1, nameText = name1, lineText = text1 },
+        new BarkSlot { rowRoot = row2, nameText = name2, lineText = text2 },
+        new BarkSlot { rowRoot = row3, nameText = name3, lineText = text3 },
+        new BarkSlot { rowRoot = row4, nameText = name4, lineText = text4 },
         };
 
         if (wheelRoot != null)
@@ -151,6 +161,22 @@ public class NpcBarkUI : MonoBehaviour
             activeBarks.RemoveAt(0);
 
         RefreshUI();
+        ForceBarkLayout();
+    }
+
+    private void ForceBarkLayout()
+    {
+        Canvas.ForceUpdateCanvases();
+
+        if (contentRoot != null)
+            LayoutRebuilder.ForceRebuildLayoutImmediate(contentRoot);
+
+        RectTransform self = transform as RectTransform;
+
+        if (self != null)
+            LayoutRebuilder.ForceRebuildLayoutImmediate(self);
+
+        Canvas.ForceUpdateCanvases();
     }
 
     public void HideImmediate()
@@ -181,7 +207,6 @@ public class NpcBarkUI : MonoBehaviour
         if (slots == null || slots.Length == 0)
             return;
 
-        // najpierw wy³¹cz wszystkie ca³e wiersze
         for (int i = 0; i < slots.Length; i++)
         {
             if (slots[i] != null)
@@ -199,5 +224,35 @@ public class NpcBarkUI : MonoBehaviour
             slot.SetActive(true);
             slot.SetData(bark.speaker, bark.line, bark.nameColor, bark.textColor);
         }
+
+        ForceBarkLayout();
+    }
+
+    private void PrepareAllTextFields()
+    {
+        TMP_Text[] texts = GetComponentsInChildren<TMP_Text>(true);
+
+        for (int i = 0; i < texts.Length; i++)
+            PrepareText(texts[i]);
+
+        LayoutElement[] layoutElements = GetComponentsInChildren<LayoutElement>(true);
+
+        for (int i = 0; i < layoutElements.Length; i++)
+        {
+            if (layoutElements[i] == null)
+                continue;
+
+            if (layoutElements[i].gameObject.name.StartsWith("Row_"))
+                layoutElements[i].preferredHeight = Mathf.Max(layoutElements[i].preferredHeight, minRowHeight);
+        }
+    }
+
+    private void PrepareText(TMP_Text text)
+    {
+        if (text == null || !forceTextWrapping)
+            return;
+
+        text.overflowMode = TextOverflowModes.Overflow;
+        text.richText = true;
     }
 }

@@ -740,6 +740,24 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             {
                 RebuildSlotsLayout();
                 RefreshOccupiedHighlights();
+
+                if (IsCombatItemData(instance.data))
+                {
+                    if (instance.data is GrenadeItemData)
+                    {
+                        if (weaponBridge == null)
+                            InitWeaponBridge();
+
+                        weaponBridge?.SyncGrenadeSlotFromInventory(instance.data);
+                    }
+                    else
+                    {
+                        RegisterWeaponFromBoxTransfer(instance);
+                    }
+
+                    RefreshGunUIFromWeaponManager();
+                }
+
                 return true;
             }
         }
@@ -1571,13 +1589,76 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
     }
     public bool GiveOrDrop(InventoryItemInstance inst)
     {
-        if (inst == null) return false;
+        if (inst == null || inst.data == null)
+            return false;
 
         if (TryAddItem(inst))
             return true;
 
-        // Nie weszło do inv -> zespawnuj obok gracza
-        SpawnDroppedItemNearPlayer(inst);
+        SpawnPickup(inst);
+        return false;
+    }
+
+    public bool TryReceiveItemFromBoxWithoutWeaponAutoRegister(InventoryItemInstance item)
+    {
+        return TryAddItemWithoutWeaponAutoRegister(item);
+    }
+
+    private bool TryAddItemWithoutWeaponAutoRegister(InventoryItemInstance instance)
+    {
+        if (instance == null || instance.data == null)
+            return false;
+
+        if (instance.data is AmmoItemData a && a.individualMagazines)
+        {
+            int payload = Mathf.Max(0, Mathf.Max(instance.totalAmmo, instance.currentAmmo));
+            instance.totalAmmo = payload;
+            instance.currentAmmo = payload;
+            instance.count = Mathf.Max(1, instance.count);
+        }
+
+        bool canStack = InventoryStackService.IsStackableItem(instance);
+
+        if (canStack)
+        {
+            foreach (var slot in slotList)
+            {
+                if (slot == null || slot.item == null)
+                    continue;
+
+                if (!InventoryStackService.CanMergeStacks(instance, slot.item))
+                    continue;
+
+                int maxStack = Mathf.Max(1, instance.data.maxStack);
+                int free = Mathf.Max(0, maxStack - slot.item.count);
+
+                if (free <= 0)
+                    continue;
+
+                int addAmount = Mathf.Min(Mathf.Max(1, instance.count), free);
+
+                slot.item.count += addAmount;
+                instance.count -= addAmount;
+
+                slot.UpdateCountDisplay();
+
+                RefreshOccupiedHighlights();
+
+                if (instance.count <= 0)
+                    return true;
+            }
+        }
+
+        for (int index = 0; index < slotList.Count; index++)
+        {
+            if (TryAddItemAt(index, instance))
+            {
+                RebuildSlotsLayout();
+                RefreshOccupiedHighlights();
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -2498,12 +2579,118 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             InitWeaponBridge();
 
         weaponBridge?.RefreshGunUI();
+    }
 
+    public bool TryGiveMissionRewardItemOrDrop(InventoryItemInstance rewardInstance)
+    {
+        if (rewardInstance == null || rewardInstance.data == null)
+            return false;
+
+        if (dropService == null)
+            InitDropService();
+
+        // Zwykłe itemy bez zasad broni.
+        if (!IsCombatItemData(rewardInstance.data))
+        {
+            if (TryAddItem(rewardInstance))
+                return true;
+
+            SpawnPickup(rewardInstance);
+            return false;
+        }
+
+        // Granaty mogą się stackować, więc nie blokujemy ich jak pistol/rifle/knife.
+        if (rewardInstance.data is GrenadeItemData)
+        {
+            if (TryAddItem(rewardInstance))
+            {
+                if (weaponBridge == null)
+                    InitWeaponBridge();
+
+                weaponBridge?.SyncGrenadeSlotFromInventory(rewardInstance.data);
+                RefreshGunUIFromWeaponManager();
+                return true;
+            }
+
+            SpawnPickup(rewardInstance);
+            return false;
+        }
+
+        // Pistols / Riffles / Melee: tylko jeden typ w inventory.
+        if (!CanReceiveMissionRewardWeapon(rewardInstance))
+        {
+            SpawnPickup(rewardInstance);
+            return false;
+        }
+
+        if (TryAddItemAutoRotate(rewardInstance))
+        {
+            RegisterWeaponFromBoxTransfer(rewardInstance);
+            RefreshGunUIFromWeaponManager();
+            return true;
+        }
+
+        SpawnPickup(rewardInstance);
+        return false;
+    }
+
+    private bool CanReceiveMissionRewardWeapon(InventoryItemInstance rewardInstance)
+    {
+        if (rewardInstance == null || rewardInstance.data == null)
+            return false;
+
+        if (!IsCombatItemData(rewardInstance.data))
+            return true;
+
+        if (rewardInstance.data is GrenadeItemData)
+            return true;
+
+        if (weaponBridge == null)
+            InitWeaponBridge();
+
+        // Używamy tej samej zasady co przy przenoszeniu broni z Boxa:
+        // jeśli gracz ma już pistol/rifle/knife tego typu slotu, nagroda wypada na ziemię.
+        return weaponBridge != null && weaponBridge.CanReceiveWeaponFromBox(rewardInstance);
+    }
+
+    private bool TryAddItemAutoRotate(InventoryItemInstance instance)
+    {
+        if (instance == null || instance.data == null)
+            return false;
+
+        // Najpierw próbuj aktualną orientacją.
+        for (int index = 0; index < slotList.Count; index++)
+        {
+            if (TryAddItemAt(index, instance))
+            {
+                RebuildSlotsLayout();
+                RefreshOccupiedHighlights();
+                return true;
+            }
+        }
+
+        // Potem próbuj rotacją, np. Glock 1x2 -> 2x1.
+        bool originalRotated = instance.rotated;
+        instance.rotated = !instance.rotated;
+
+        for (int index = 0; index < slotList.Count; index++)
+        {
+            if (TryAddItemAt(index, instance))
+            {
+                RebuildSlotsLayout();
+                RefreshOccupiedHighlights();
+                return true;
+            }
+        }
+
+        // Nie weszło w żadnej orientacji -> przywróć.
+        instance.rotated = originalRotated;
+        return false;
     }
 
     public bool TryTransferCombatItemFromBoxToPlayer(
-    InventoryItemInstance item,
-    IInventorySlotOwner boxOwner)
+        InventoryItemInstance item,
+        IInventorySlotOwner boxOwner)
     {
         if (weaponBridge == null)
             InitWeaponBridge();
@@ -2513,7 +2700,17 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
                    item,
                    boxOwner,
                    this,
-                   removeFromPlayerOnFail: () => RemoveItemFromOwner(item)
+                   removeFromPlayerOnFail: () =>
+                   {
+                       ForceRemoveItemCompletely(item);
+
+                       if (item.count <= 0)
+                           item.count = 1;
+
+                       RefreshOccupiedHighlights();
+                       RebuildSlotsLayout();
+                       RefreshGunUIFromWeaponManager();
+                   }
                );
     }
 }

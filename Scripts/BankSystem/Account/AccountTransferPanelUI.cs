@@ -815,8 +815,7 @@ public class AccountTransferPanelUI : MonoBehaviour
 
         if (bank != null)
         {
-            // Prosty transfer bez fee:
-            ok = bank.TransferNoFee(_fromAccountId, _toAccountId, _amount);
+            ok = bank.TransferBetweenAccounts(_fromAccountId, _toAccountId, _amount);
         }
 
         if (!ok)

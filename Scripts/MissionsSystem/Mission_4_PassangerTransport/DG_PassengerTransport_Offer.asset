@@ -1,0 +1,36 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: DG_PassengerTransport_Offer
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: I have another job for you. A guy named Wolf needs a ride, but he cannot
+      move safely on foot. Find a car, pick him up, and take him to the marked place.
+    options:
+    - playerText: I'll take the job.
+      nextNodeId: accepted
+      debugEvent: Mission_PassengerTransport_Accept
+    - playerText: Not right now.
+      nextNodeId: declined
+      debugEvent: Mission_PassengerTransport_Decline
+    endAfterNpcLine: 0
+  - id: accepted
+    npcText: Good. Find a car first, then drive to Wolf. He will get in when you
+      stop close enough.
+    options: []
+    endAfterNpcLine: 1
+  - id: declined
+    npcText: Fine. Come back if you change your mind.
+    options: []
+    endAfterNpcLine: 1
+  startNodeId: start

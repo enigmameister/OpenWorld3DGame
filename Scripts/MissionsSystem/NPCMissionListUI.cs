@@ -204,6 +204,9 @@ public class NPCMissionListUI : MonoBehaviour
         if (link == null || link.definition == null)
             return true;
 
+        if (MissionCoordinator.Instance != null)
+            return MissionCoordinator.Instance.ShouldHideMissionInNpcList(link.definition);
+
         MissionDefinition definition = link.definition;
 
         if (state == MissionRuntimeState.RewardClaimed &&

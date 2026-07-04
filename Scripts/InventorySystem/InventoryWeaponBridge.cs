@@ -217,7 +217,17 @@ public class InventoryWeaponBridge
         if (!CanReceiveWeaponFromBox(item))
             return false;
 
-        bool addedToPlayer = playerOwner.TryReceiveItem(item);
+
+        bool addedToPlayer = false;
+
+        if (playerOwner is InventoryUI inventoryUI)
+        {
+            addedToPlayer = inventoryUI.TryReceiveItemFromBoxWithoutWeaponAutoRegister(item);
+        }
+        else
+        {
+            addedToPlayer = playerOwner.TryReceiveItem(item);
+        }
 
         if (!addedToPlayer)
             return false;

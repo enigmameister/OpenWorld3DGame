@@ -146,6 +146,12 @@ public class MissionCoordinator : MonoBehaviour
         if (definition == null)
             return true;
 
+        if (definition.hideUntilPrerequisitesCompleted &&
+            !ArePrerequisitesCompleted(definition))
+        {
+            return true;
+        }
+
         MissionRuntimeState state = GetMissionState(definition.missionId);
 
         if (state == MissionRuntimeState.RewardClaimed &&
@@ -153,6 +159,54 @@ public class MissionCoordinator : MonoBehaviour
             definition.hideAfterCompleted)
         {
             return true;
+        }
+
+        return false;
+    }
+
+    public bool ArePrerequisitesCompleted(MissionDefinition definition)
+    {
+        if (definition == null)
+            return false;
+
+        if (definition.requiredCompletedMissions == null ||
+            definition.requiredCompletedMissions.Length == 0)
+        {
+            return true;
+        }
+
+        for (int i = 0; i < definition.requiredCompletedMissions.Length; i++)
+        {
+            MissionDefinition required = definition.requiredCompletedMissions[i];
+
+            if (required == null)
+                continue;
+
+            MissionRuntimeState state = GetMissionState(required.missionId);
+
+            if (state != MissionRuntimeState.RewardClaimed)
+                return false;
+        }
+
+        return true;
+    }
+
+    public bool HasAnyMissionInProgress(bool includeReadyToClaim = true)
+    {
+        foreach (var pair in runtimeById)
+        {
+            IMissionRuntime runtime = pair.Value;
+
+            if (runtime == null)
+                continue;
+
+            MissionRuntimeState state = runtime.RuntimeState;
+
+            if (state == MissionRuntimeState.Active)
+                return true;
+
+            if (includeReadyToClaim && state == MissionRuntimeState.ReadyToClaim)
+                return true;
         }
 
         return false;

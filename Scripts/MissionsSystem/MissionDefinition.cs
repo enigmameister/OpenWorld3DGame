@@ -20,4 +20,8 @@ public class MissionDefinition : ScriptableObject
     public DialogueGraph activeGraph;
     public DialogueGraph readyToClaimGraph;
     public DialogueGraph completedGraph;
+
+    [Header("Prerequisites")]
+    public MissionDefinition[] requiredCompletedMissions;
+    public bool hideUntilPrerequisitesCompleted = true;
 }

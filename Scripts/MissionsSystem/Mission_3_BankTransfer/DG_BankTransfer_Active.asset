@@ -1,0 +1,28 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: DG_BankTransfer_Active
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: 'Do not forget the transfer. Account number 1993. Amount: $1500. If
+      the bank says you need an account first, create one and then send the money.'
+    options:
+    - playerText: I'm on it.
+      nextNodeId: end
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: end
+    npcText: Good. Come back when it is done.
+    options: []
+    endAfterNpcLine: 1
+  startNodeId: start
