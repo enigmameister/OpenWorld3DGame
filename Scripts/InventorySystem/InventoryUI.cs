@@ -1551,6 +1551,31 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         return false;
     }
 
+    public bool HasAnyForbiddenWeaponForMetalDetector(
+    bool detectMelee = true,
+    bool detectFirearms = true,
+    bool detectGrenades = false)
+    {
+        foreach (var slot in slotList)
+        {
+            if (slot == null || slot.item == null || slot.item.data == null)
+                continue;
+
+            InventoryItemData data = slot.item.data;
+
+            if (detectFirearms && data is WeaponItemData)
+                return true;
+
+            if (detectMelee && data is MeleeItemData)
+                return true;
+
+            if (detectGrenades && data is GrenadeItemData)
+                return true;
+        }
+
+        return false;
+    }
+
     public static void CaptureDragOriginalRotation(InventoryItemInstance item)
     {
         DragOriginalRotated = item != null && item.rotated;

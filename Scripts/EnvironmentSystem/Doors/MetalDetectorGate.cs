@@ -7,7 +7,12 @@ public class MetalDetectorGate : MonoBehaviour
     [Tooltip("Czy bramka działa? Gdy false, światła wyłączone + brak detekcji.")]
     public bool hasPower = true;
 
-    [Header("Detekcja")]
+    [Header("Detekcja inventory")]
+    [SerializeField] private bool detectInventoryWeaponsByItemType = true;
+    [SerializeField] private bool detectFirearmsInInventory = true;
+    [SerializeField] private bool detectMeleeInInventory = true;
+    [SerializeField] private bool detectGrenadesInInventory = false;
+
     [Tooltip("Warstwy traktowane jako \"nielegalne\" w świecie (dropy itd.)")]
     public LayerMask forbiddenLayers;          // np. Weapon
     [Tooltip("Tag gracza")]
@@ -92,8 +97,10 @@ public class MetalDetectorGate : MonoBehaviour
             worldForbiddenInside.Add(root);
 
         // gracz
-        if (root.CompareTag(playerTag))
-            playersInside.Add(root);
+        GameObject playerRoot = FindPlayerRoot(other);
+
+        if (playerRoot != null)
+            playersInside.Add(playerRoot);
 
         RefreshState();
     }
@@ -109,10 +116,33 @@ public class MetalDetectorGate : MonoBehaviour
         if (IsForbiddenLayer(root.layer))
             worldForbiddenInside.Remove(root);
 
-        if (root.CompareTag(playerTag))
-            playersInside.Remove(root);
+        GameObject playerRoot = FindPlayerRoot(other);
+
+        if (playerRoot != null)
+            playersInside.Remove(playerRoot);
 
         RefreshState();
+    }
+
+    private GameObject FindPlayerRoot(Collider other)
+    {
+        if (other == null)
+            return null;
+
+        if (other.CompareTag(playerTag))
+            return other.gameObject;
+
+        Transform t = other.transform;
+
+        while (t != null)
+        {
+            if (t.CompareTag(playerTag))
+                return t.gameObject;
+
+            t = t.parent;
+        }
+
+        return null;
     }
 
     bool IsForbiddenLayer(int layer)
@@ -134,8 +164,24 @@ public class MetalDetectorGate : MonoBehaviour
             else
                 inv = InventoryUI.Instance;
 
-            if (inv != null && inv.HasAnyItemOnLayer(forbiddenLayers))
-                return true;
+            if (inv == null)
+                continue;
+
+            if (detectInventoryWeaponsByItemType)
+            {
+                if (inv.HasAnyForbiddenWeaponForMetalDetector(
+                        detectMelee: detectMeleeInInventory,
+                        detectFirearms: detectFirearmsInInventory,
+                        detectGrenades: detectGrenadesInInventory))
+                {
+                    return true;
+                }
+            }
+            else
+            {
+                if (inv.HasAnyItemOnLayer(forbiddenLayers))
+                    return true;
+            }
         }
 
         return false;
@@ -143,6 +189,8 @@ public class MetalDetectorGate : MonoBehaviour
 
     void RefreshState()
     {
+        CleanupNulls();
+
         if (!hasPower)
         {
             ForceLightsOff();
@@ -170,6 +218,12 @@ public class MetalDetectorGate : MonoBehaviour
             if (holdTimer <= 0f)
                 SetLights(idleColor);
         }
+    }
+
+    private void CleanupNulls()
+    {
+        worldForbiddenInside.RemoveWhere(go => go == null);
+        playersInside.RemoveWhere(go => go == null);
     }
 
     void SetLights(Color c)

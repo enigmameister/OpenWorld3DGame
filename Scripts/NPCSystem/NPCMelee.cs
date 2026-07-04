@@ -109,6 +109,20 @@ public class NPCMelee : MonoBehaviour, IDamageable
 
     public static event System.Action<NPCMelee, string> OnMeleeNPCDied;
 
+    [Header("Vehicle Impact")]
+    [SerializeField] private float vehicleForwardImpulseMin = 2.0f;
+    [SerializeField] private float vehicleForwardImpulseMax = 7.0f;
+    [SerializeField] private float vehicleUpImpulseMin = 0.4f;
+    [SerializeField] private float vehicleUpImpulseMax = 3.0f;
+    [SerializeField] private float vehicleTorqueImpulseMin = 0.5f;
+    [SerializeField] private float vehicleTorqueImpulseMax = 2.5f;
+    [SerializeField] private float ragdollAngularDragAfterVehicleHit = 8f;
+    [SerializeField] private float ragdollDragAfterVehicleHit = 0.5f;
+
+    private bool _pendingVehicleImpact;
+    private Vector3 _pendingVehicleVelocity;
+    private float _pendingVehicleSpeedKmh;
+
     private void Awake()
     {
         core = GetComponent<NPCCore>();
@@ -476,7 +490,7 @@ public class NPCMelee : MonoBehaviour, IDamageable
                 billboard.enabled = false;
 
             EnableRagdollFall();
-
+            ApplyVehicleImpactImpulseIfNeeded();
             StopAllCoroutines();
             StartCoroutine(Despawn(12f));
         }
@@ -672,5 +686,57 @@ public class NPCMelee : MonoBehaviour, IDamageable
         damagePerHit = Mathf.Max(1, profile.meleeDamagePerHit);
         chaseSpeed = Mathf.Max(0.1f, profile.meleeChaseSpeed);
         enragedChaseSpeed = Mathf.Max(chaseSpeed, profile.meleeEnragedChaseSpeed);
+    }
+
+    public void ReceiveVehicleImpact(
+    float damage,
+    float speedKmh,
+    Vector3 vehicleVelocity,
+    Vector3 hitPoint,
+    string attackerName = "PlayerVehicle")
+    {
+        if (_isDead)
+            return;
+
+        _pendingVehicleImpact = true;
+        _pendingVehicleVelocity = vehicleVelocity;
+        _pendingVehicleSpeedKmh = speedKmh;
+
+        TakeDamage(Mathf.CeilToInt(damage), attackerName);
+    }
+
+    private void ApplyVehicleImpactImpulseIfNeeded()
+    {
+        if (!_pendingVehicleImpact || _rootRb == null)
+            return;
+
+        Vector3 dir = _pendingVehicleVelocity;
+
+        if (dir.sqrMagnitude < 0.01f)
+            dir = transform.forward;
+
+        dir.y = 0f;
+
+        if (dir.sqrMagnitude < 0.01f)
+            dir = transform.forward;
+
+        dir.Normalize();
+
+        float speed01 = Mathf.InverseLerp(10f, 90f, _pendingVehicleSpeedKmh);
+
+        float forwardImpulse = Mathf.Lerp(vehicleForwardImpulseMin, vehicleForwardImpulseMax, speed01);
+        float upImpulse = Mathf.Lerp(vehicleUpImpulseMin, vehicleUpImpulseMax, speed01);
+        float torqueImpulse = Mathf.Lerp(vehicleTorqueImpulseMin, vehicleTorqueImpulseMax, speed01);
+
+        _rootRb.linearDamping = ragdollDragAfterVehicleHit;
+        _rootRb.angularDamping = ragdollAngularDragAfterVehicleHit;
+        _rootRb.maxAngularVelocity = 8f;
+
+        _rootRb.AddForce(dir * forwardImpulse + Vector3.up * upImpulse, ForceMode.Impulse);
+
+        // Mały torque, nie ogromny, żeby nie kręcił się jak bączek.
+        _rootRb.AddTorque(Random.insideUnitSphere * torqueImpulse, ForceMode.Impulse);
+
+        _pendingVehicleImpact = false;
     }
 }

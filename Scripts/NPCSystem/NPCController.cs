@@ -180,6 +180,11 @@ public class NPCController : MonoBehaviour, IDamageable
     private bool pendingMeleeFall = false;
     private Vector3 pendingMeleeAttackerPos;
 
+    private bool pendingVehicleFall = false;
+    private Vector3 pendingVehicleVelocity;
+    private float pendingVehicleSpeedKmh;
+    private Vector3 pendingVehicleHitPoint;
+
     // ===== PUBLICZNE WŁAŚCIWOŚCI/INTERFEJS =====
     public bool IsDead => isDead;
     public bool IsProvoked => isProvoked;
@@ -1231,6 +1236,46 @@ public class NPCController : MonoBehaviour, IDamageable
         }
     }
 
+    public bool CanBeRunOverByVehicle()
+    {
+        if (isDead)
+            return false;
+
+        if (core != null)
+        {
+            if (core.Importance != NPCCore.NPCImportance.Ambient)
+                return false;
+
+            if (core.IsInvulnerable || core.PreventDeath)
+                return false;
+        }
+
+        return true;
+    }
+
+    public void ReceiveVehicleImpact(
+        float damage,
+        float speedKmh,
+        Vector3 vehicleVelocity,
+        Vector3 hitPoint,
+        string attackerName = "PlayerVehicle")
+    {
+        if (!CanBeRunOverByVehicle())
+        {
+            // Później można tu dodać reakcję ochroniarza / NPC questowego.
+            return;
+        }
+
+        pendingVehicleFall = true;
+        pendingVehicleVelocity = vehicleVelocity;
+        pendingVehicleSpeedKmh = speedKmh;
+        pendingVehicleHitPoint = hitPoint;
+
+        lastAttacker = attackerName;
+
+        TakeDamage(Mathf.CeilToInt(damage), attackerName);
+    }
+
     private IEnumerator CoDieAfterHitFrame()
     {
         yield return null;
@@ -1463,6 +1508,41 @@ public class NPCController : MonoBehaviour, IDamageable
             anim: null,
             gentleImpulse: true
         );
+
+        if (pendingVehicleFall && rootRb != null)
+        {
+            Vector3 dir = pendingVehicleVelocity;
+
+            if (dir.sqrMagnitude < 0.01f)
+                dir = transform.forward;
+
+            dir.y = 0f;
+
+            if (dir.sqrMagnitude < 0.01f)
+                dir = transform.forward;
+
+            dir.Normalize();
+
+            float speed01 = Mathf.InverseLerp(10f, 90f, pendingVehicleSpeedKmh);
+
+            // Przy małej prędkości NPC bardziej wpada pod auto.
+            // Przy dużej prędkości dostaje mocniejszy wyrzut do przodu i lekko w górę.
+            float forwardImpulse = Mathf.Lerp(1.5f, 9.0f, speed01);
+            float upwardImpulse = Mathf.Lerp(0.15f, 4.2f, speed01);
+            float torqueImpulse = Mathf.Lerp(1.0f, 8.0f, speed01);
+
+            rootRb.AddForce(
+                dir * forwardImpulse + Vector3.up * upwardImpulse,
+                ForceMode.Impulse
+            );
+
+            rootRb.AddTorque(
+                Random.insideUnitSphere * torqueImpulse,
+                ForceMode.Impulse
+            );
+
+            pendingVehicleFall = false;
+        }
 
         if (pendingBackstabFall && rootRb != null)
         {

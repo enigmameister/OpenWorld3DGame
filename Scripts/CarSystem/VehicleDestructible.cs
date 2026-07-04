@@ -194,6 +194,16 @@ public class VehicleDestructible : MonoBehaviour
 
     void OnCollisionEnter(Collision collision)
     {
+        if (collision == null || collision.collider == null)
+            return;
+
+        if (collision.collider.GetComponentInParent<NPCCore>() != null ||
+            collision.collider.GetComponentInParent<NPCController>() != null ||
+            collision.collider.GetComponentInParent<NPCMelee>() != null)
+        {
+            return;
+        }
+
         if (isInvincible)
             return;
 
