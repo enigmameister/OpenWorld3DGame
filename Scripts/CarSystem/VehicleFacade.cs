@@ -257,7 +257,7 @@ public class VehicleFacade : MonoBehaviour
         public int currentSpeedKPH;
         public bool isReversing;
 
-        public CarInteraction.VehicleCameraSnapshot camera;
+        public VehicleCameraSnapshot camera;
     }
 
     [System.Serializable]
@@ -363,7 +363,7 @@ public class VehicleFacade : MonoBehaviour
 
             SetMode(VehicleMode.PlayerControlled);
         }
-    }
+    }   
 
     public void RestoreVehicleOnlyFromLoad(VehicleSaveSnapshot snapshot)
     {

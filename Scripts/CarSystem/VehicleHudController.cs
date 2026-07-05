@@ -42,12 +42,12 @@ public class VehicleHudController : MonoBehaviour
             gunUiRoot = gunUI.gameObject;
     }
 
-    public void SetContext(GameObject vehicleObject, Transform defaultHudParent)
+    public void SetContext(GameObject vehicleObject, Transform defaultHudParent = null)
     {
         if (vehicleObject != null)
             carObject = vehicleObject;
 
-        if (hudParent == null)
+        if (hudParent == null && defaultHudParent != null)
             hudParent = defaultHudParent;
 
         ResolveRefs();
@@ -148,7 +148,7 @@ public class VehicleHudController : MonoBehaviour
         }
         else if (speedometerPrefab != null)
         {
-            Transform parent = hudParent;
+            Transform parent = ResolveHudParent();
 
             activeHud = Instantiate(speedometerPrefab, parent);
             hudWasInstantiated = true;
@@ -224,5 +224,28 @@ public class VehicleHudController : MonoBehaviour
             else
                 speedometer.gameObject.SetActive(false);
         }
+    }
+
+    private Transform ResolveHudParent()
+    {
+        if (hudParent != null)
+            return hudParent;
+
+        if (VehicleHudRootProvider.Instance != null)
+        {
+            hudParent = VehicleHudRootProvider.Instance.SpeedometerHudParent;
+            return hudParent;
+        }
+
+        VehicleHudRootProvider provider = FindFirstObjectByType<VehicleHudRootProvider>(FindObjectsInactive.Include);
+
+        if (provider != null)
+        {
+            hudParent = provider.SpeedometerHudParent;
+            return hudParent;
+        }
+
+        Debug.LogWarning($"[VehicleHudController] No VehicleHudRootProvider found. Speedometer will be spawned under no parent on {name}.");
+        return null;
     }
 }

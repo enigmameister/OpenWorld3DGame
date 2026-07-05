@@ -6,6 +6,8 @@ public class CarInteraction : MonoBehaviour
 {
     [Header("Vehicle Modules")]
     [SerializeField] private VehicleHudController hudController;
+    [SerializeField] private VehicleParkingController parkingController;
+    [SerializeField] private VehicleCameraController cameraController;
 
     [Header("References")]
     public Transform seatPosition;
@@ -14,15 +16,7 @@ public class CarInteraction : MonoBehaviour
     public GameObject playerObject;
     public GameObject carObject;
     public GameObject PlayerGUI;
-    public GameObject weaponInventoryObject;
     public Transform exitPoint;
-
-    [Header("Weapon UI")]
-    [SerializeField] private GunUI gunUI;
-    [SerializeField] private GameObject gunUiRoot;
-
-    private bool gunUiRootWasActive = true;
-    private bool gunUiStateCached = false;
 
     [Header("UI (interaction)")]
     public GameObject loadingBarRoot;
@@ -32,22 +26,6 @@ public class CarInteraction : MonoBehaviour
     public GameObject[] carCameras;
     public Camera activeCarCamera;
     public float cameraLerpSpeed = 5f;
-
-    [Header("HUD Speedometer")]
-    [SerializeField] private SpeedometerUI speedometerPrefab;
-    [SerializeField] private Transform hudParent;
-    [SerializeField] private GameObject legacySpeedometerInScene;
-
-    [Header("Park brake (mass/drag)")]
-    public bool useParkingMass = true;
-    public float parkedMass = 10000f;
-    public float parkedDrag = 5f;
-    public float parkedAngularDrag = 5f;
-    public bool freezeRotXZWhenParked = true;
-    public bool hardStopOnPark = false;
-
-    [Header("Pushing protection")]
-    public bool ignorePlayerCollisionWhenParked = true;
 
     [Header("Player – Hidden objects")]
     [SerializeField] private GameObject playerVisualRoot;
@@ -68,7 +46,6 @@ public class CarInteraction : MonoBehaviour
     private bool isInCar;
     private bool isBusy;
 
-    private WeaponManager wm;
     private VehicleDestructible carDestructible;
     private PlayerStats playerScriptRef;
     private PlayerMovement playerMovement;
@@ -77,16 +54,6 @@ public class CarInteraction : MonoBehaviour
     private Transform currentCameraTarget;
 
     private Rigidbody carRb;
-    private float _defMass;
-    private float _defDrag;
-    private float _defAngDrag;
-    private RigidbodyConstraints _defConstraints;
-
-    private Collider[] _carCols;
-    private Collider[] _playerCols;
-
-    private SpeedometerUI _activeHud;
-    private bool _hudWasInstantiated;
 
     private bool _useFreelock = false;
     private bool _freelockJustLatched = false;
@@ -104,18 +71,6 @@ public class CarInteraction : MonoBehaviour
     public static CarInteraction ActiveCarInteraction { get; private set; }
 
     public bool IsPlayerInThisCar => isInCar;
-
-    [System.Serializable]
-    public struct VehicleCameraSnapshot
-    {
-        public int cameraIndex;
-
-        public bool useFreelock;
-        public float orbitYaw;
-        public float orbitPitch;
-        public float orbitDistance;
-    }
-
     public Transform VehicleRoot =>
         carObject != null ? carObject.transform : transform;
 
@@ -137,15 +92,6 @@ public class CarInteraction : MonoBehaviour
             if (!playerCC) playerCC = playerObject.GetComponent<CharacterController>();
         }
 
-        if (weaponInventoryObject != null)
-            wm = weaponInventoryObject.GetComponent<WeaponManager>();
-
-        if (gunUI == null)
-            gunUI = FindFirstObjectByType<GunUI>();
-
-        if (gunUiRoot == null && gunUI != null)
-            gunUiRoot = gunUI.gameObject;
-
         if (loadingBarRoot != null)
             loadingBarRoot.SetActive(false);
 
@@ -153,13 +99,37 @@ public class CarInteraction : MonoBehaviour
             hudController = GetComponent<VehicleHudController>();
 
         if (hudController != null)
-        {
-            Transform defaultHudParent = hudParent != null
-                ? hudParent
-                : (PlayerGUI != null ? PlayerGUI.transform : null);
+            hudController.SetContext(carObject != null ? carObject : gameObject);
 
-            hudController.SetContext(carObject != null ? carObject : gameObject, defaultHudParent);
+        if (cameraController == null)
+        {
+            cameraController = GetComponent<VehicleCameraController>();
+
+
+            if (cameraController == null)
+                Debug.LogWarning($"[CarInteraction] Missing VehicleCameraController on {name}");
         }
+
+        if (cameraController != null)
+        {
+            cameraController.SetContext(
+                carObject != null ? carObject : gameObject,
+                carCamera,
+                playerCamera,
+                carCameras,
+                activeCarCamera
+            );
+        }
+        if (parkingController == null)
+        {
+            parkingController = GetComponent<VehicleParkingController>();
+
+            if (parkingController == null)
+                Debug.LogWarning($"[CarInteraction] Missing VehicleParkingController on {name}");
+        }
+
+        if (parkingController != null)
+            parkingController.SetContext(carObject != null ? carObject : gameObject, playerObject);
 
         if (carObject != null)
         {
@@ -168,25 +138,17 @@ public class CarInteraction : MonoBehaviour
 
             if (carRb != null)
             {
-                _defMass = carRb.mass;
-                _defDrag = carRb.linearDamping;
-                _defAngDrag = carRb.angularDamping;
-                _defConstraints = carRb.constraints;
-
                 carRb.isKinematic = false;
                 carRb.useGravity = true;
                 carRb.constraints &= ~(RigidbodyConstraints.FreezePositionX |
                                        RigidbodyConstraints.FreezePositionY |
                                        RigidbodyConstraints.FreezePositionZ);
             }
-
-            _carCols = carObject.GetComponentsInChildren<Collider>(true);
         }
 
         if (playerObject != null)
         {
             playerScriptRef = playerObject.GetComponent<PlayerStats>();
-            _playerCols = playerObject.GetComponentsInChildren<Collider>(true);
         }
 
         if (!playerVisualRoot && playerObject != null)
@@ -204,7 +166,8 @@ public class CarInteraction : MonoBehaviour
             currentCameraTarget = carCameras[0].transform;
 
         ResetFreelockDefaults();
-        SetParked(true);
+        if (parkingController != null)
+            parkingController.SetParked(true);
     }
 
     void Update()
@@ -231,87 +194,11 @@ public class CarInteraction : MonoBehaviour
 
         if (isInCar && PlayerInputHandler.Instance.SwitchCameraPressedThisFrame)
         {
-            _useFreelock = false;
-            SwitchToNextCarCamera();
-        }
-
-        if (isInCar &&
-            !WorldMapUI.IsOpen &&
-            Input.GetKeyDown(freelockToggleKey) &&
-            !_useFreelock)
-        {
-            EnableFreelockFromCurrentCamera();
-        }
-
-        if (isInCar && activeCarCamera != null && _useFreelock && !WorldMapUI.IsOpen)
-        {
-            Vector2 look = PlayerInputHandler.Instance.LookDelta;
-
-            if (look.sqrMagnitude > 0.000001f)
-            {
-                _orbitYaw += look.x * orbitYawSpeed * Time.unscaledDeltaTime;
-                _orbitPitch -= look.y * orbitPitchSpeed * Time.unscaledDeltaTime;
-                _orbitPitch = Mathf.Clamp(_orbitPitch, orbitPitchLimits.x, orbitPitchLimits.y);
-                _freelockJustLatched = false;
-            }
-
-            float scroll = Input.mouseScrollDelta.y;
-            if (Mathf.Abs(scroll) > 0.01f)
-            {
-                _orbitDist = Mathf.Clamp(
-                    _orbitDist - scroll * orbitZoomSpeed,
-                    orbitMinDistance,
-                    orbitMaxDistance
-                );
-
-                _freelockJustLatched = false;
-            }
+            if (cameraController != null)
+                cameraController.SwitchToNextCamera();
         }
     }
 
-    void LateUpdate()
-    {
-        if (!isInCar || activeCarCamera == null) return;
-
-        if (_useFreelock)
-        {
-            Vector3 target = carObject.transform.position + Vector3.up * orbitTargetHeight;
-            Quaternion rot = Quaternion.Euler(_orbitPitch, _orbitYaw, 0f);
-
-            Vector3 desiredPos = target + rot * (Vector3.back * _orbitDist);
-            Quaternion desiredRot = Quaternion.LookRotation(target - desiredPos, Vector3.up);
-
-            float k = _freelockJustLatched ? 1f : Time.deltaTime * orbitSmooth;
-
-            activeCarCamera.transform.position = Vector3.Lerp(
-                activeCarCamera.transform.position,
-                desiredPos,
-                k
-            );
-
-            activeCarCamera.transform.rotation = Quaternion.Slerp(
-                activeCarCamera.transform.rotation,
-                desiredRot,
-                k
-            );
-
-            _freelockJustLatched = false;
-        }
-        else if (currentCameraTarget != null)
-        {
-            activeCarCamera.transform.position = Vector3.Lerp(
-                activeCarCamera.transform.position,
-                currentCameraTarget.position,
-                Time.deltaTime * cameraLerpSpeed
-            );
-
-            activeCarCamera.transform.rotation = Quaternion.Slerp(
-                activeCarCamera.transform.rotation,
-                currentCameraTarget.rotation,
-                Time.deltaTime * cameraLerpSpeed
-            );
-        }
-    }
 
     void SwitchToNextCarCamera()
     {
@@ -332,73 +219,6 @@ public class CarInteraction : MonoBehaviour
         currentCameraTarget = null;
     }
 
-    private void SetGunUIVisible(bool visible)
-    {
-        if (gunUI == null)
-            gunUI = FindFirstObjectByType<GunUI>(FindObjectsInactive.Include);
-
-        if (gunUiRoot == null && gunUI != null)
-            gunUiRoot = gunUI.gameObject;
-
-        if (gunUiRoot == null)
-            return;
-
-        if (!visible)
-        {
-            if (!gunUiStateCached)
-            {
-                gunUiRootWasActive = gunUiRoot.activeSelf;
-                gunUiStateCached = true;
-            }
-
-            gunUiRoot.SetActive(false);
-            return;
-        }
-
-        // After leaving a vehicle, player is on foot again.
-        // Force GunUI back on instead of restoring a cached "false" state from load-in-car.
-        gunUiRoot.SetActive(true);
-        gunUiRootWasActive = true;
-        gunUiStateCached = false;
-
-        if (gunUI != null)
-            gunUI.enabled = true;
-
-        if (wm != null)
-        {
-            wm.enabled = true;
-            wm.RefreshWeaponHUD();
-        }
-
-        InventoryUI.Instance?.RefreshGunUIFromWeaponManager();
-    }
-
-    private void ForceRestoreGunUIAfterVehicle()
-    {
-        if (gunUI == null)
-            gunUI = FindFirstObjectByType<GunUI>(FindObjectsInactive.Include);
-
-        if (gunUiRoot == null && gunUI != null)
-            gunUiRoot = gunUI.gameObject;
-
-        if (gunUiRoot != null)
-            gunUiRoot.SetActive(true);
-
-        if (gunUI != null)
-            gunUI.enabled = true;
-
-        gunUiRootWasActive = true;
-        gunUiStateCached = false;
-
-        if (wm != null)
-        {
-            wm.enabled = true;
-            wm.RefreshWeaponHUD();
-        }
-
-        InventoryUI.Instance?.RefreshGunUIFromWeaponManager();
-    }
-
     IEnumerator EnterCarRoutine()
     {
         if (carDestructible != null && carDestructible.isPermanentlyDestroyed)
@@ -408,7 +228,8 @@ public class CarInteraction : MonoBehaviour
         PlayerMovement.IsMovementLocked = true;
         yield return StartCoroutine(ShowLoadingBar(1f));
 
-        SetParked(false);
+        if (parkingController != null)
+            parkingController.SetParked(false);
 
         var uiManager = Object.FindFirstObjectByType<CarUIManager>();
         var carInfo = carObject != null ? carObject.GetComponent<CarInfo>() : null;
@@ -463,23 +284,20 @@ public class CarInteraction : MonoBehaviour
             );
         }
 
-        if (carCamera != null) carCamera.SetActive(true);
-        if (playerCamera != null) playerCamera.SetActive(false);
+        if (cameraController != null)
+            cameraController.OnPlayerEnteredVehicle();
+        else
+        {
+            if (carCamera != null) carCamera.SetActive(true);
+            if (playerCamera != null) playerCamera.SetActive(false);
+        }
+
         if (PlayerGUI != null) PlayerGUI.SetActive(true);
 
         if (hudController != null)
-        {
             hudController.OnPlayerEnteredVehicle(controller);
-        }
-        else
-        {
-            SetGunUIVisible(false);
 
-            if (wm != null)
-                wm.enabled = false;
-        }
-
-        if (carCameras != null && carCameras.Length > 0)
+        if (cameraController == null && carCameras != null && carCameras.Length > 0)
         {
             currentCameraIndex = 0;
 
@@ -494,9 +312,6 @@ public class CarInteraction : MonoBehaviour
 
         if (carRaceUiRoot != null)
             carRaceUiRoot.SetActive(false);
-
-        _useFreelock = false;
-        ResetFreelockDefaults();
 
         if (carObject != null)
             MinimapTargetProvider.Instance?.SetVehicleTarget(carObject.transform);
@@ -582,47 +397,40 @@ public class CarInteraction : MonoBehaviour
 
         PlayerMovement.IsMovementLocked = false;
 
-        if (carCamera != null) carCamera.SetActive(false);
-        if (playerCamera != null) playerCamera.SetActive(true);
+        if (cameraController != null)
+            cameraController.OnPlayerExitedVehicle();
+        else
+        {
+            if (carCamera != null) carCamera.SetActive(false);
+            if (playerCamera != null) playerCamera.SetActive(true);
+        }
+
         if (PlayerGUI != null) PlayerGUI.SetActive(true);
 
         if (hudController != null)
-        {
             hudController.OnPlayerExitedVehicle();
-        }
-        else
+
+        if (cameraController == null)
         {
-            if (wm != null)
+            if (carCameras != null)
             {
-                wm.enabled = true;
-                wm.RefreshWeaponHUD();
+                foreach (var cam in carCameras)
+                {
+                    if (cam != null) cam.SetActive(false);
+                }
             }
 
-            ForceRestoreGunUIAfterVehicle();
+            _useFreelock = false;
+            currentCameraIndex = 0;
+            currentCameraTarget = (carCameras != null && carCameras.Length > 0 && carCameras[0] != null)
+                ? carCameras[0].transform
+                : null;
+
+            ResetFreelockDefaults();
         }
 
-        if (carCameras != null)
-        {
-            foreach (var cam in carCameras)
-            {
-                if (cam != null) cam.SetActive(false);
-            }
-        }
-
-        SetParked(true);
-
-        _useFreelock = false;
-        currentCameraIndex = 0;
-        currentCameraTarget = (carCameras != null && carCameras.Length > 0 && carCameras[0] != null)
-            ? carCameras[0].transform
-            : null;
-
-        ResetFreelockDefaults();
-        if (hudController == null)
-        {
-            TearDownHud();
-            ForceHideCarHud();
-        }
+        if (parkingController != null)
+            parkingController.SetParked(true);
 
         if (carDestructible != null)
             carDestructible.AssignPlayerRef(null);
@@ -645,7 +453,8 @@ public class CarInteraction : MonoBehaviour
 
         isBusy = false;
 
-        SetParked(false);
+        if (parkingController != null)
+            parkingController.SetParked(false);
 
         var controller = carObject != null ? carObject.GetComponent<CarControll>() : null;
 
@@ -699,28 +508,24 @@ public class CarInteraction : MonoBehaviour
             );
         }
 
-        if (carCamera != null)
-            carCamera.SetActive(true);
+        if (cameraController != null)
+            cameraController.OnPlayerRestoredInsideVehicle();
+        else
+        {
+            if (carCamera != null)
+                carCamera.SetActive(true);
 
-        if (playerCamera != null)
-            playerCamera.SetActive(false);
+            if (playerCamera != null)
+                playerCamera.SetActive(false);
+        }
 
         if (PlayerGUI != null)
             PlayerGUI.SetActive(true);
 
         if (hudController != null)
-        {
             hudController.OnPlayerRestoredInsideVehicle(controller);
-        }
-        else
-        {
-            SetGunUIVisible(false);
 
-            if (wm != null)
-                wm.enabled = false;
-        }
-
-        if (carCameras != null && carCameras.Length > 0)
+        if (cameraController == null && carCameras != null && carCameras.Length > 0)
         {
             currentCameraIndex = 0;
 
@@ -741,12 +546,6 @@ public class CarInteraction : MonoBehaviour
 
         if (carObject != null)
             MinimapTargetProvider.Instance?.SetVehicleTarget(carObject.transform);
-
-        if (hudController == null)
-        {
-            ForceHideCarHud();
-            SetupHud(controller);
-        }
 
         OnEnterCar?.Invoke();
         OnAnyPlayerEnteredCar?.Invoke(this);
@@ -772,139 +571,6 @@ public class CarInteraction : MonoBehaviour
 
         _useFreelock = true;
         _freelockJustLatched = true;
-    }
-
-    void SetParked(bool parked)
-    {
-        if (carRb == null) return;
-
-        if (parked)
-        {
-            carRb.isKinematic = true;
-            carRb.useGravity = false;
-
-            if (useParkingMass)
-            {
-                carRb.mass = parkedMass;
-                carRb.linearDamping = parkedDrag;
-                carRb.angularDamping = parkedAngularDrag;
-            }
-
-            carRb.constraints = RigidbodyConstraints.FreezeAll;
-            carRb.Sleep();
-
-            if (ignorePlayerCollisionWhenParked && _carCols != null && _playerCols != null)
-            {
-                foreach (var c in _carCols)
-                {
-                    if (!c || c.isTrigger) continue;
-
-                    foreach (var p in _playerCols)
-                    {
-                        if (!p || p.isTrigger) continue;
-                        Physics.IgnoreCollision(c, p, true);
-                    }
-                }
-            }
-        }
-        else
-        {
-            carRb.isKinematic = false;
-            carRb.useGravity = true;
-
-            carRb.mass = _defMass;
-            carRb.linearDamping = _defDrag;
-            carRb.angularDamping = _defAngDrag;
-            carRb.constraints = _defConstraints;
-            carRb.WakeUp();
-
-            if (ignorePlayerCollisionWhenParked && _carCols != null && _playerCols != null)
-            {
-                foreach (var c in _carCols)
-                {
-                    if (!c || c.isTrigger) continue;
-
-                    foreach (var p in _playerCols)
-                    {
-                        if (!p || p.isTrigger) continue;
-                        Physics.IgnoreCollision(c, p, false);
-                    }
-                }
-            }
-        }
-    }
-
-    void SetupHud(CarControll controller)
-    {
-        if (speedometerPrefab == null && legacySpeedometerInScene != null)
-        {
-            _activeHud = legacySpeedometerInScene.GetComponent<SpeedometerUI>();
-            _hudWasInstantiated = false;
-        }
-        else if (speedometerPrefab != null)
-        {
-            Transform parent = hudParent ? hudParent : (PlayerGUI ? PlayerGUI.transform : null);
-            _activeHud = Instantiate(speedometerPrefab, parent);
-            _hudWasInstantiated = true;
-        }
-
-        if (_activeHud != null)
-        {
-            _activeHud.carController = controller;
-            _activeHud.nitroSystem = carObject != null ? carObject.GetComponent<NitroSystem>() : null;
-
-            if (_activeHud.speedometerRoot != null)
-                _activeHud.speedometerRoot.SetActive(true);
-        }
-    }
-
-    void TearDownHud()
-    {
-        if (_activeHud == null) return;
-
-        if (_hudWasInstantiated)
-            Destroy(_activeHud.gameObject);
-        else if (_activeHud.speedometerRoot != null)
-            _activeHud.speedometerRoot.SetActive(false);
-
-        _activeHud = null;
-        _hudWasInstantiated = false;
-    }
-
-    private void ForceHideCarHud()
-    {
-        if (_activeHud != null)
-        {
-            if (_activeHud.speedometerRoot != null)
-                _activeHud.speedometerRoot.SetActive(false);
-
-            if (_hudWasInstantiated)
-                Destroy(_activeHud.gameObject);
-
-            _activeHud = null;
-            _hudWasInstantiated = false;
-        }
-
-        if (legacySpeedometerInScene != null)
-            legacySpeedometerInScene.SetActive(false);
-
-        SpeedometerUI[] speedometers = FindObjectsByType<SpeedometerUI>(FindObjectsSortMode.None);
-
-        for (int i = 0; i < speedometers.Length; i++)
-        {
-            SpeedometerUI speedometer = speedometers[i];
-
-            if (speedometer == null)
-                continue;
-
-            speedometer.carController = null;
-            speedometer.nitroSystem = null;
-
-            if (speedometer.speedometerRoot != null)
-                speedometer.speedometerRoot.SetActive(false);
-            else
-                speedometer.gameObject.SetActive(false);
-        }
     }
 
     void ResetFreelockDefaults()
@@ -953,6 +619,9 @@ public class CarInteraction : MonoBehaviour
 
     public VehicleCameraSnapshot GetCameraSnapshot()
     {
+        if (cameraController != null)
+            return cameraController.GetSnapshot();
+
         return new VehicleCameraSnapshot
         {
             cameraIndex = currentCameraIndex,
@@ -963,9 +632,14 @@ public class CarInteraction : MonoBehaviour
             orbitDistance = _orbitDist
         };
     }
-
     public void ApplyCameraSnapshot(VehicleCameraSnapshot snapshot)
     {
+        if (cameraController != null)
+        {
+            cameraController.ApplySnapshot(snapshot);
+            return;
+        }
+
         if (carCameras == null || carCameras.Length == 0)
             return;
 
