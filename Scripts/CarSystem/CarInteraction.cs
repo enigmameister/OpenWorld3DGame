@@ -407,10 +407,21 @@ public class CarInteraction : MonoBehaviour
         if (playerMovement != null)
             playerMovement.IsInVehicle = true;
 
-        QuickSaveSystem.Instance?.SetCurrentVehicle(
-            carObject != null ? carObject.transform : transform,
-            true
-        );
+        VehicleFacade vehicleFacade = carObject != null
+            ? carObject.GetComponent<VehicleFacade>()
+            : GetComponent<VehicleFacade>();
+
+        if (vehicleFacade != null)
+        {
+            QuickSaveSystem.Instance?.SetCurrentVehicle(vehicleFacade, true);
+        }
+        else
+        {
+            QuickSaveSystem.Instance?.SetCurrentVehicle(
+                carObject != null ? carObject.transform : transform,
+                true
+            );
+        }
 
         if (playerVisualRoot != null)
             playerVisualRoot.SetActive(false);
@@ -495,10 +506,21 @@ public class CarInteraction : MonoBehaviour
         if (carObject != null && ActiveVehicleTransform == carObject.transform)
             ActiveVehicleTransform = null;
 
-        QuickSaveSystem.Instance?.SetCurrentVehicle(
-            carObject != null ? carObject.transform : transform,
-            false
-        );
+        VehicleFacade vehicleFacade = carObject != null
+            ? carObject.GetComponent<VehicleFacade>()
+            : GetComponent<VehicleFacade>();
+
+        if (vehicleFacade != null)
+        {
+            QuickSaveSystem.Instance?.SetCurrentVehicle(vehicleFacade, false);
+        }
+        else
+        {
+            QuickSaveSystem.Instance?.SetCurrentVehicle(
+                carObject != null ? carObject.transform : transform,
+                false
+            );
+        }
 
         if (playerObject != null)
         {

@@ -92,11 +92,17 @@ public class QuickSaveSystem : MonoBehaviour
     private class VehicleSaveData
     {
         public string saveId;
+
+        // Old variables
         public Vector3 position;
         public Quaternion rotation;
         public Vector3 linearVelocity;
         public Vector3 angularVelocity;
         public VehicleDestructible.VehicleDamageSnapshot damage;
+
+        // Save through VehicleFacade
+        public bool hasFacadeSnapshot;
+        public VehicleFacade.VehicleSaveSnapshot facadeSnapshot;
     }
 
     private void Awake()
@@ -181,18 +187,36 @@ public class QuickSaveSystem : MonoBehaviour
                     vehicleEntity = currentVehicleRoot.gameObject.AddComponent<QuickSaveEntity>();
 
                 data.vehicleSaveId = vehicleEntity.SaveId;
-                data.vehiclePos = currentVehicleRoot.position;
-                data.vehicleRot = currentVehicleRoot.rotation;
 
-                Rigidbody vehicleRb = currentVehicleRoot.GetComponent<Rigidbody>();
+                VehicleFacade vehicleFacade = currentVehicleRoot.GetComponent<VehicleFacade>();
 
-                if (vehicleRb == null)
-                    vehicleRb = currentVehicleRoot.GetComponentInChildren<Rigidbody>();
+                if (vehicleFacade == null)
+                    vehicleFacade = currentVehicleRoot.GetComponentInChildren<VehicleFacade>(true);
 
-                if (vehicleRb != null)
+                if (vehicleFacade != null)
                 {
-                    data.vehicleLinearVelocity = vehicleRb.linearVelocity;
-                    data.vehicleAngularVelocity = vehicleRb.angularVelocity;
+                    VehicleFacade.VehicleSaveSnapshot snapshot = vehicleFacade.CaptureSaveSnapshot();
+
+                    data.vehiclePos = snapshot.runtime.position;
+                    data.vehicleRot = snapshot.runtime.rotation;
+                    data.vehicleLinearVelocity = snapshot.runtime.linearVelocity;
+                    data.vehicleAngularVelocity = snapshot.runtime.angularVelocity;
+                }
+                else
+                {
+                    data.vehiclePos = currentVehicleRoot.position;
+                    data.vehicleRot = currentVehicleRoot.rotation;
+
+                    Rigidbody vehicleRb = currentVehicleRoot.GetComponent<Rigidbody>();
+
+                    if (vehicleRb == null)
+                        vehicleRb = currentVehicleRoot.GetComponentInChildren<Rigidbody>();
+
+                    if (vehicleRb != null)
+                    {
+                        data.vehicleLinearVelocity = vehicleRb.linearVelocity;
+                        data.vehicleAngularVelocity = vehicleRb.angularVelocity;
+                    }
                 }
 
                 Debug.Log($"[QuickSave] Vehicle saved: {currentVehicleRoot.name}, id={data.vehicleSaveId}");
@@ -244,6 +268,35 @@ public class QuickSaveSystem : MonoBehaviour
             if (entity == null)
                 continue;
 
+            VehicleFacade facade = entity.GetComponent<VehicleFacade>();
+
+            if (facade == null)
+                facade = entity.GetComponentInChildren<VehicleFacade>(true);
+
+            if (facade != null)
+            {
+                VehicleFacade.VehicleSaveSnapshot snapshot = facade.CaptureSaveSnapshot();
+
+                VehicleSaveData data = new VehicleSaveData
+                {
+                    saveId = entity.SaveId,
+
+                    hasFacadeSnapshot = true,
+                    facadeSnapshot = snapshot,
+
+                    
+                    position = snapshot.runtime.position,
+                    rotation = snapshot.runtime.rotation,
+                    linearVelocity = snapshot.runtime.linearVelocity,
+                    angularVelocity = snapshot.runtime.angularVelocity,
+                    damage = snapshot.hasDamageSnapshot ? snapshot.damageSnapshot : default
+                };
+
+                result.Add(data);
+                continue;
+            }
+
+            // Fallback without VehicleFacade
             VehicleDestructible destructible = entity.GetComponent<VehicleDestructible>();
 
             if (destructible == null)
@@ -254,9 +307,10 @@ public class QuickSaveSystem : MonoBehaviour
             if (rb == null)
                 rb = entity.GetComponentInChildren<Rigidbody>();
 
-            VehicleSaveData data = new VehicleSaveData
+            VehicleSaveData oldData = new VehicleSaveData
             {
                 saveId = entity.SaveId,
+                hasFacadeSnapshot = false,
                 position = entity.transform.position,
                 rotation = entity.transform.rotation,
                 linearVelocity = rb != null ? rb.linearVelocity : Vector3.zero,
@@ -264,7 +318,7 @@ public class QuickSaveSystem : MonoBehaviour
                 damage = destructible.GetSnapshot()
             };
 
-            result.Add(data);
+            result.Add(oldData);
         }
 
         Debug.Log($"[QuickSave] Vehicle snapshot count={result.Count}");
@@ -367,27 +421,42 @@ public class QuickSaveSystem : MonoBehaviour
 
         if (data.wasInVehicle && savedVehicle != null)
         {
-            CarInteraction carInteraction = savedVehicle.GetComponent<CarInteraction>();
+            VehicleSaveData savedVehicleData = FindVehicleDataBySaveId(data.vehicles, data.vehicleSaveId);
 
-            if (carInteraction == null)
-                carInteraction = savedVehicle.GetComponentInChildren<CarInteraction>(true);
+            VehicleFacade vehicleFacade = savedVehicle.GetComponent<VehicleFacade>();
 
-            if (carInteraction != null)
+            if (vehicleFacade == null)
+                vehicleFacade = savedVehicle.GetComponentInChildren<VehicleFacade>(true);
+
+            if (vehicleFacade != null && savedVehicleData != null && savedVehicleData.hasFacadeSnapshot)
             {
-                SetTransformAndVelocity(
-                    savedVehicle,
-                    data.vehiclePos,
-                    data.vehicleRot,
-                    data.vehicleLinearVelocity,
-                    data.vehicleAngularVelocity
-                );
-
-                carInteraction.RestorePlayerInsideCarFromLoad(
-                    data.vehicleLinearVelocity,
-                    data.vehicleAngularVelocity
-                );
-
+                vehicleFacade.RestorePlayerInsideFromLoad(savedVehicleData.facadeSnapshot);
                 restoredIntoVehicle = true;
+            }
+            else
+            {
+                CarInteraction carInteraction = savedVehicle.GetComponent<CarInteraction>();
+
+                if (carInteraction == null)
+                    carInteraction = savedVehicle.GetComponentInChildren<CarInteraction>(true);
+
+                if (carInteraction != null)
+                {
+                    SetTransformAndVelocity(
+                        savedVehicle,
+                        data.vehiclePos,
+                        data.vehicleRot,
+                        data.vehicleLinearVelocity,
+                        data.vehicleAngularVelocity
+                    );
+
+                    carInteraction.RestorePlayerInsideCarFromLoad(
+                        data.vehicleLinearVelocity,
+                        data.vehicleAngularVelocity
+                    );
+
+                    restoredIntoVehicle = true;
+                }
             }
         }
 
@@ -428,6 +497,23 @@ public class QuickSaveSystem : MonoBehaviour
         RestoreNPCs(data.npcs);
     }
 
+    private VehicleSaveData FindVehicleDataBySaveId(VehicleSaveData[] vehicles, string saveId)
+    {
+        if (vehicles == null || string.IsNullOrWhiteSpace(saveId))
+            return null;
+
+        for (int i = 0; i < vehicles.Length; i++)
+        {
+            if (vehicles[i] == null)
+                continue;
+
+            if (vehicles[i].saveId == saveId)
+                return vehicles[i];
+        }
+
+        return null;
+    }
+
     private void RestoreVehicles(VehicleSaveData[] savedVehicles)
     {
         if (savedVehicles == null)
@@ -437,11 +523,26 @@ public class QuickSaveSystem : MonoBehaviour
         {
             VehicleSaveData saved = savedVehicles[i];
 
+            if (saved == null)
+                continue;
+
             Transform vehicleTransform = FindEntityBySaveId(saved.saveId);
 
             if (vehicleTransform == null)
                 continue;
 
+            VehicleFacade facade = vehicleTransform.GetComponent<VehicleFacade>();
+
+            if (facade == null)
+                facade = vehicleTransform.GetComponentInChildren<VehicleFacade>(true);
+
+            if (facade != null && saved.hasFacadeSnapshot)
+            {
+                facade.RestoreVehicleOnlyFromLoad(saved.facadeSnapshot);
+                continue;
+            }
+
+            // Fallback dla starych save'ów albo pojazdów bez VehicleFacade.
             SetTransformAndVelocity(
                 vehicleTransform,
                 saved.position,
@@ -507,6 +608,19 @@ public class QuickSaveSystem : MonoBehaviour
     public void SetCurrentVehicle(Transform vehicleRoot, bool isPlayerInside)
     {
         currentVehicleRoot = vehicleRoot;
+        playerWasInVehicle = isPlayerInside;
+    }
+
+    public void SetCurrentVehicle(VehicleFacade vehicle, bool isPlayerInside)
+    {
+        if (vehicle == null)
+        {
+            currentVehicleRoot = null;
+            playerWasInVehicle = false;
+            return;
+        }
+
+        currentVehicleRoot = vehicle.transform;
         playerWasInVehicle = isPlayerInside;
     }
 
