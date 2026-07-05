@@ -173,4 +173,20 @@ public class VehicleParkingController : MonoBehaviour
             }
         }
     }
+    public void ApplyRuntimeVelocity(Vector3 linearVelocity, Vector3 angularVelocity)
+    {
+        if (vehicleRb == null)
+            ResolveRefs();
+
+        if (vehicleRb == null)
+            return;
+
+        vehicleRb.isKinematic = false;
+        vehicleRb.useGravity = true;
+
+        vehicleRb.linearVelocity = linearVelocity;
+        vehicleRb.angularVelocity = angularVelocity;
+
+        vehicleRb.WakeUp();
+    }
 }

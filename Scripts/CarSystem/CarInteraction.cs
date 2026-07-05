@@ -27,9 +27,6 @@ public class CarInteraction : MonoBehaviour
     private bool isInCar;
     private bool isBusy;
 
-    private VehicleDestructible carDestructible;    
-    private Rigidbody carRb;
-
     public event System.Action OnEnterCar;
     public event System.Action OnExitCar;
 
@@ -147,21 +144,6 @@ public class CarInteraction : MonoBehaviour
 
         if (driveController != null)
             driveController.SetContext(carObject != null ? carObject : gameObject);
-
-        if (carObject != null)
-        {
-            carDestructible = carObject.GetComponent<VehicleDestructible>();
-            carRb = carObject.GetComponent<Rigidbody>();
-
-            if (carRb != null)
-            {
-                carRb.isKinematic = false;
-                carRb.useGravity = true;
-                carRb.constraints &= ~(RigidbodyConstraints.FreezePositionX |
-                                       RigidbodyConstraints.FreezePositionY |
-                                       RigidbodyConstraints.FreezePositionZ);
-            }
-        }
 
         if (parkingController != null)
             parkingController.SetParked(true);
@@ -314,13 +296,10 @@ public class CarInteraction : MonoBehaviour
         if (driveController != null)
             controller = driveController.EnablePlayerControl(PlayerStatsRef);
 
-        if (carRb != null)
+        if (parkingController != null)
         {
-            carRb.isKinematic = false;
-            carRb.useGravity = true;
-            carRb.linearVelocity = linearVelocity;
-            carRb.angularVelocity = angularVelocity;
-            carRb.WakeUp();
+            parkingController.SetParked(false);
+            parkingController.ApplyRuntimeVelocity(linearVelocity, angularVelocity);
         }
 
         isInCar = true;
