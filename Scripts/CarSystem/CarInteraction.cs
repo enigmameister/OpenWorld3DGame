@@ -9,6 +9,8 @@ public class CarInteraction : MonoBehaviour
     [SerializeField] private VehicleParkingController parkingController;
     [SerializeField] private VehicleCameraController cameraController;
     [SerializeField] private VehicleOccupantController occupantController;
+    [SerializeField] private VehicleStateBridge stateBridge;
+    [SerializeField] private VehicleDriveController driveController;
 
     [Header("References")]
     public Transform seatPosition;
@@ -31,11 +33,20 @@ public class CarInteraction : MonoBehaviour
     public event System.Action OnEnterCar;
     public event System.Action OnExitCar;
 
-    public static event System.Action<CarInteraction> OnAnyPlayerEnteredCar;
-    public static event System.Action<CarInteraction> OnAnyPlayerExitedCar;
+    public static event System.Action<CarInteraction> OnAnyPlayerEnteredCar
+    {
+        add => VehicleStateBridge.OnAnyPlayerEnteredCar += value;
+        remove => VehicleStateBridge.OnAnyPlayerEnteredCar -= value;
+    }
 
-    public static Transform ActiveVehicleTransform { get; private set; }
-    public static CarInteraction ActiveCarInteraction { get; private set; }
+    public static event System.Action<CarInteraction> OnAnyPlayerExitedCar
+    {
+        add => VehicleStateBridge.OnAnyPlayerExitedCar += value;
+        remove => VehicleStateBridge.OnAnyPlayerExitedCar -= value;
+    }
+
+    public static Transform ActiveVehicleTransform => VehicleStateBridge.ActiveVehicleTransform;
+    public static CarInteraction ActiveCarInteraction => VehicleStateBridge.ActiveCarInteraction;
 
     public bool IsPlayerInThisCar => isInCar;
     public Transform VehicleRoot =>
@@ -110,6 +121,33 @@ public class CarInteraction : MonoBehaviour
             );
         }
 
+        if (stateBridge == null)
+        {
+            stateBridge = GetComponent<VehicleStateBridge>();
+
+            if (stateBridge == null)
+                Debug.LogWarning($"[CarInteraction] Missing VehicleStateBridge on {name}");
+        }
+
+        if (stateBridge != null)
+        {
+            stateBridge.SetContext(
+                carObject != null ? carObject : gameObject,
+                this
+            );
+        }
+
+        if (driveController == null)
+        {
+            driveController = GetComponent<VehicleDriveController>();
+
+            if (driveController == null)
+                Debug.LogWarning($"[CarInteraction] Missing VehicleDriveController on {name}");
+        }
+
+        if (driveController != null)
+            driveController.SetContext(carObject != null ? carObject : gameObject);
+
         if (carObject != null)
         {
             carDestructible = carObject.GetComponent<VehicleDestructible>();
@@ -160,7 +198,7 @@ public class CarInteraction : MonoBehaviour
 
     IEnumerator EnterCarRoutine()
     {
-        if (carDestructible != null && carDestructible.isPermanentlyDestroyed)
+        if (driveController != null && driveController.IsPermanentlyDestroyed())
             yield break;
 
         isBusy = true;
@@ -175,36 +213,12 @@ public class CarInteraction : MonoBehaviour
         if (uiManager != null && carInfo != null)
             uiManager.ShowCarName(carInfo.carDisplayName);
 
-        var controller = carObject != null ? carObject.GetComponent<CarControll>() : null;
-        if (controller != null)
-        {
-            controller.isControlled = true;
-            controller.enabled = true;
-        }
+        CarControll controller = null;
 
-        if (carDestructible != null && PlayerStatsRef != null)
-            carDestructible.AssignPlayerRef(PlayerStatsRef);
+        if (driveController != null)
+            controller = driveController.EnablePlayerControl(PlayerStatsRef);
 
         isInCar = true;
-
-        if (carObject != null)
-            ActiveVehicleTransform = carObject.transform;
-
-        VehicleFacade vehicleFacade = carObject != null
-            ? carObject.GetComponent<VehicleFacade>()
-            : GetComponent<VehicleFacade>();
-
-        if (vehicleFacade != null)
-        {
-            QuickSaveSystem.Instance?.SetCurrentVehicle(vehicleFacade, true);
-        }
-        else
-        {
-            QuickSaveSystem.Instance?.SetCurrentVehicle(
-                carObject != null ? carObject.transform : transform,
-                true
-            );
-        }
 
         if (occupantController != null)
             occupantController.EnterVehicle();
@@ -220,15 +234,12 @@ public class CarInteraction : MonoBehaviour
         if (carRaceUiRoot != null)
             carRaceUiRoot.SetActive(false);
 
-        if (carObject != null)
-            MinimapTargetProvider.Instance?.SetVehicleTarget(carObject.transform);
-
         isBusy = false;
 
-        ActiveCarInteraction = this;
+        if (stateBridge != null)
+            stateBridge.NotifyPlayerEntered();
 
         OnEnterCar?.Invoke();
-        OnAnyPlayerEnteredCar?.Invoke(this);
     }
 
     IEnumerator ExitCarRoutine()
@@ -236,24 +247,15 @@ public class CarInteraction : MonoBehaviour
         isBusy = true;
         yield return StartCoroutine(ShowLoadingBar(0.25f));
 
-        MinimapTargetProvider.Instance?.ClearVehicleTarget();
-
         if (raceManager != null && raceManager.raceActive && !raceManager.raceFinished)
         {
             raceManager.ResetRace();
         }
 
-        var controller = carObject != null ? carObject.GetComponent<CarControll>() : null;
-        if (controller != null)
-        {
-            controller.isControlled = false;
-            controller.enabled = false;
-        }
+        if (driveController != null)
+            driveController.DisablePlayerControl();
 
         isInCar = false;
-
-        if (carObject != null && ActiveVehicleTransform == carObject.transform)
-            ActiveVehicleTransform = null;
 
         VehicleFacade vehicleFacade = carObject != null
             ? carObject.GetComponent<VehicleFacade>()
@@ -287,21 +289,17 @@ public class CarInteraction : MonoBehaviour
         if (parkingController != null)
             parkingController.SetParked(true);
 
-        if (carDestructible != null)
-            carDestructible.AssignPlayerRef(null);
-
         isBusy = false;
 
-        if (ActiveCarInteraction == this)
-            ActiveCarInteraction = null;
+        if (stateBridge != null)
+            stateBridge.NotifyPlayerExited();
 
         OnExitCar?.Invoke();
-        OnAnyPlayerExitedCar?.Invoke(this);
     }
 
     public void RestorePlayerInsideCarFromLoad(Vector3 linearVelocity, Vector3 angularVelocity)
     {
-        if (carDestructible != null && carDestructible.isPermanentlyDestroyed)
+        if (driveController != null && driveController.IsPermanentlyDestroyed())
             return;
 
         StopAllCoroutines();
@@ -311,13 +309,10 @@ public class CarInteraction : MonoBehaviour
         if (parkingController != null)
             parkingController.SetParked(false);
 
-        var controller = carObject != null ? carObject.GetComponent<CarControll>() : null;
+        CarControll controller = null;
 
-        if (controller != null)
-        {
-            controller.isControlled = true;
-            controller.enabled = true;
-        }
+        if (driveController != null)
+            controller = driveController.EnablePlayerControl(PlayerStatsRef);
 
         if (carRb != null)
         {
@@ -328,31 +323,11 @@ public class CarInteraction : MonoBehaviour
             carRb.WakeUp();
         }
 
-        if (carDestructible != null && PlayerStatsRef != null)
-            carDestructible.AssignPlayerRef(PlayerStatsRef);
-
         isInCar = true;
-
-        if (carObject != null)
-            ActiveVehicleTransform = carObject.transform;
-
-        ActiveCarInteraction = this;
 
         VehicleFacade vehicleFacade = carObject != null
             ? carObject.GetComponent<VehicleFacade>()
             : GetComponent<VehicleFacade>();
-
-        if (vehicleFacade != null)
-        {
-            QuickSaveSystem.Instance?.SetCurrentVehicle(vehicleFacade, true);
-        }
-        else
-        {
-            QuickSaveSystem.Instance?.SetCurrentVehicle(
-                carObject != null ? carObject.transform : transform,
-                true
-            );
-        }
 
         if (occupantController != null)
             occupantController.RestoreInsideVehicleFromLoad();
@@ -369,11 +344,10 @@ public class CarInteraction : MonoBehaviour
         if (carRaceUiRoot != null)
             carRaceUiRoot.SetActive(false);
 
-        if (carObject != null)
-            MinimapTargetProvider.Instance?.SetVehicleTarget(carObject.transform);
+        if (stateBridge != null)
+            stateBridge.NotifyPlayerRestoredInsideFromLoad();
 
         OnEnterCar?.Invoke();
-        OnAnyPlayerEnteredCar?.Invoke(this);
     }
 
     IEnumerator ShowLoadingBar(float duration)
