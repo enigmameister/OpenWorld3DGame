@@ -256,6 +256,8 @@ public class VehicleFacade : MonoBehaviour
         public int currentGear;
         public int currentSpeedKPH;
         public bool isReversing;
+
+        public CarInteraction.VehicleCameraSnapshot camera;
     }
 
     [System.Serializable]
@@ -287,7 +289,11 @@ public class VehicleFacade : MonoBehaviour
 
             currentGear = controller != null ? controller.currentGear : 1,
             currentSpeedKPH = controller != null ? controller.currentSpeedKPH : 0,
-            isReversing = controller != null && controller.isReversing
+            isReversing = controller != null && controller.isReversing,
+
+            camera = interaction != null
+                ? interaction.GetCameraSnapshot()
+                : default
         };
     }
 
@@ -352,6 +358,8 @@ public class VehicleFacade : MonoBehaviour
                 snapshot.runtime.linearVelocity,
                 snapshot.runtime.angularVelocity
             );
+
+            interaction.ApplyCameraSnapshot(snapshot.runtime.camera);
 
             SetMode(VehicleMode.PlayerControlled);
         }
