@@ -25,11 +25,18 @@ public class SpeedometerUI : MonoBehaviour
 
     void Update()
     {
-        if (speedometerRoot != null)
-            speedometerRoot.SetActive(carController != null && carController.isControlled);
+        bool active = carController != null && carController.isControlled;
 
-        if (carController == null || !carController.isControlled)
+        if (speedometerRoot != null)
+            speedometerRoot.SetActive(active);
+
+        if (!active)
+        {
+            if (nitroFillImage != null)
+                nitroFillImage.fillAmount = 0f;
+
             return;
+        }
 
         // prędkość
         int displaySpeed = carController.GetDisplaySpeedKPH();

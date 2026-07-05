@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using System.Collections;
+using System;
 
 public class VehicleDestructible : MonoBehaviour
 {
@@ -30,14 +31,132 @@ public class VehicleDestructible : MonoBehaviour
     [Header("Tryb specjalny")]
     public bool isInvincible = false; // Zmienna do misji/wyścigów
 
+    private MeshRenderer[] cachedRenderers;
+    private Material[][] originalMaterials;
+
     [SerializeField] bool killDriverOnExplosion = true;
     [SerializeField] float driverExplosionDamage = 9999f;
 
     private PlayerStats _playerRef;
 
+    private void Awake()
+    {
+        CacheOriginalMaterials();
+    }
+
     void Start()
     {
         currentHP = maxHP;
+    }
+
+    private void CacheOriginalMaterials()
+    {
+        cachedRenderers = GetComponentsInChildren<MeshRenderer>(true);
+        originalMaterials = new Material[cachedRenderers.Length][];
+
+        for (int i = 0; i < cachedRenderers.Length; i++)
+        {
+            if (cachedRenderers[i] == null)
+                continue;
+
+            originalMaterials[i] = cachedRenderers[i].materials;
+        }
+    }
+
+    [Serializable]
+    public struct VehicleDamageSnapshot
+    {
+        public float currentHP;
+        public bool isDestroyed;
+        public bool isPermanentlyDestroyed;
+        public bool isInSmokePhase;
+    }
+    public VehicleDamageSnapshot GetSnapshot()
+    {
+        return new VehicleDamageSnapshot
+        {
+            currentHP = currentHP,
+            isDestroyed = isDestroyed,
+            isPermanentlyDestroyed = isPermanentlyDestroyed,
+            isInSmokePhase = isInSmokePhase
+        };
+    }
+
+    public void ApplySnapshot(VehicleDamageSnapshot snapshot)
+    {
+        StopAllCoroutines();
+
+        currentHP = Mathf.Clamp(snapshot.currentHP, 0f, maxHP);
+        isDestroyed = snapshot.isDestroyed;
+        isPermanentlyDestroyed = snapshot.isPermanentlyDestroyed;
+        isInSmokePhase = snapshot.isInSmokePhase;
+
+        if (smokeEffect != null)
+        {
+            smokeEffect.SetActive(isInSmokePhase);
+
+            ParticleSystem ps = smokeEffect.GetComponent<ParticleSystem>();
+
+            if (ps != null)
+            {
+                if (isInSmokePhase)
+                    ps.Play();
+                else
+                    ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+            }
+        }
+
+        CarControll controller = GetComponent<CarControll>();
+
+        if (controller != null)
+            controller.enabled = !isPermanentlyDestroyed;
+
+        if (isPermanentlyDestroyed || isDestroyed)
+            ApplyDestroyedMaterial();
+        else
+            RestoreOriginalMaterials();
+    }
+
+    private void ApplyDestroyedMaterial()
+    {
+        if (destroyedMaterial == null)
+            return;
+
+        MeshRenderer[] renderers = GetComponentsInChildren<MeshRenderer>(true);
+
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            MeshRenderer renderer = renderers[i];
+
+            if (renderer == null)
+                continue;
+
+            Material[] newMats = new Material[renderer.materials.Length];
+
+            for (int j = 0; j < newMats.Length; j++)
+                newMats[j] = destroyedMaterial;
+
+            renderer.materials = newMats;
+        }
+    }
+
+    private void RestoreOriginalMaterials()
+    {
+        if (cachedRenderers == null || originalMaterials == null)
+            CacheOriginalMaterials();
+
+        for (int i = 0; i < cachedRenderers.Length; i++)
+        {
+            MeshRenderer renderer = cachedRenderers[i];
+
+            if (renderer == null)
+                continue;
+
+            if (i >= originalMaterials.Length || originalMaterials[i] == null)
+                continue;
+
+            renderer.materials = originalMaterials[i];
+        }
     }
 
     public void TakeDamage(float amount)
@@ -167,18 +286,11 @@ public class VehicleDestructible : MonoBehaviour
         }
 
         // Zmiana materiału pojazdu
-        var renderers = GetComponentsInChildren<MeshRenderer>();
-        foreach (var rend in renderers)
-        {
-            Material[] newMats = new Material[rend.materials.Length];
-            for (int i = 0; i < newMats.Length; i++)
-                newMats[i] = destroyedMaterial;
-
-            rend.materials = newMats;
-        }
+        ApplyDestroyedMaterial();
 
         // Zniszczenie obiektu po czasie
-        Destroy(gameObject, destroyDelayAfterExplosion);
+        if (GetComponent<QuickSaveEntity>() == null)
+            Destroy(gameObject, destroyDelayAfterExplosion);
 
         yield return null;
     }

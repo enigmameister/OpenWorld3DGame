@@ -309,7 +309,7 @@ public class CarInteraction : MonoBehaviour
     private void SetGunUIVisible(bool visible)
     {
         if (gunUI == null)
-            gunUI = FindFirstObjectByType<GunUI>();
+            gunUI = FindFirstObjectByType<GunUI>(FindObjectsInactive.Include);
 
         if (gunUiRoot == null && gunUI != null)
             gunUiRoot = gunUI.gameObject;
@@ -319,19 +319,56 @@ public class CarInteraction : MonoBehaviour
 
         if (!visible)
         {
-            gunUiRootWasActive = gunUiRoot.activeSelf;
-            gunUiStateCached = true;
+            if (!gunUiStateCached)
+            {
+                gunUiRootWasActive = gunUiRoot.activeSelf;
+                gunUiStateCached = true;
+            }
+
             gunUiRoot.SetActive(false);
             return;
         }
 
-        if (gunUiStateCached)
-            gunUiRoot.SetActive(gunUiRootWasActive);
-        else
-            gunUiRoot.SetActive(true);
+        // After leaving a vehicle, player is on foot again.
+        // Force GunUI back on instead of restoring a cached "false" state from load-in-car.
+        gunUiRoot.SetActive(true);
+        gunUiRootWasActive = true;
+        gunUiStateCached = false;
+
+        if (gunUI != null)
+            gunUI.enabled = true;
 
         if (wm != null)
+        {
+            wm.enabled = true;
             wm.RefreshWeaponHUD();
+        }
+
+        InventoryUI.Instance?.RefreshGunUIFromWeaponManager();
+    }
+
+    private void ForceRestoreGunUIAfterVehicle()
+    {
+        if (gunUI == null)
+            gunUI = FindFirstObjectByType<GunUI>(FindObjectsInactive.Include);
+
+        if (gunUiRoot == null && gunUI != null)
+            gunUiRoot = gunUI.gameObject;
+
+        if (gunUiRoot != null)
+            gunUiRoot.SetActive(true);
+
+        if (gunUI != null)
+            gunUI.enabled = true;
+
+        gunUiRootWasActive = true;
+        gunUiStateCached = false;
+
+        if (wm != null)
+        {
+            wm.enabled = true;
+            wm.RefreshWeaponHUD();
+        }
 
         InventoryUI.Instance?.RefreshGunUIFromWeaponManager();
     }
@@ -369,6 +406,11 @@ public class CarInteraction : MonoBehaviour
 
         if (playerMovement != null)
             playerMovement.IsInVehicle = true;
+
+        QuickSaveSystem.Instance?.SetCurrentVehicle(
+            carObject != null ? carObject.transform : transform,
+            true
+        );
 
         if (playerVisualRoot != null)
             playerVisualRoot.SetActive(false);
@@ -430,6 +472,10 @@ public class CarInteraction : MonoBehaviour
     {
         isBusy = true;
         yield return StartCoroutine(ShowLoadingBar(0.25f));
+
+        if (playerObject != null && !playerObject.activeSelf)
+            playerObject.SetActive(true);
+
         MinimapTargetProvider.Instance?.ClearVehicleTarget();
 
         if (raceManager != null && raceManager.raceActive && !raceManager.raceFinished)
@@ -448,6 +494,11 @@ public class CarInteraction : MonoBehaviour
 
         if (carObject != null && ActiveVehicleTransform == carObject.transform)
             ActiveVehicleTransform = null;
+
+        QuickSaveSystem.Instance?.SetCurrentVehicle(
+            carObject != null ? carObject.transform : transform,
+            false
+        );
 
         if (playerObject != null)
         {
@@ -484,10 +535,12 @@ public class CarInteraction : MonoBehaviour
         if (PlayerGUI != null) PlayerGUI.SetActive(true);
 
         if (wm != null)
+        {
             wm.enabled = true;
+            wm.RefreshWeaponHUD();
+        }
 
-        // po powrocie do gracza przywracamy HUD broni
-        SetGunUIVisible(true);
+        ForceRestoreGunUIAfterVehicle();
 
         if (carCameras != null)
         {
@@ -507,6 +560,7 @@ public class CarInteraction : MonoBehaviour
 
         ResetFreelockDefaults();
         TearDownHud();
+        ForceHideCarHud();
 
         if (carDestructible != null)
             carDestructible.AssignPlayerRef(null);
@@ -518,6 +572,112 @@ public class CarInteraction : MonoBehaviour
 
         OnExitCar?.Invoke();
         OnAnyPlayerExitedCar?.Invoke(this);
+    }
+
+    public void RestorePlayerInsideCarFromLoad(Vector3 linearVelocity, Vector3 angularVelocity)
+    {
+        if (carDestructible != null && carDestructible.isPermanentlyDestroyed)
+            return;
+
+        StopAllCoroutines();
+
+        isBusy = false;
+
+        SetParked(false);
+
+        var controller = carObject != null ? carObject.GetComponent<CarControll>() : null;
+
+        if (controller != null)
+        {
+            controller.isControlled = true;
+            controller.enabled = true;
+        }
+
+        if (carRb != null)
+        {
+            carRb.isKinematic = false;
+            carRb.useGravity = true;
+            carRb.linearVelocity = linearVelocity;
+            carRb.angularVelocity = angularVelocity;
+            carRb.WakeUp();
+        }
+
+        if (carDestructible != null && playerScriptRef != null)
+            carDestructible.AssignPlayerRef(playerScriptRef);
+
+        isInCar = true;
+
+        if (carObject != null)
+            ActiveVehicleTransform = carObject.transform;
+
+        ActiveCarInteraction = this;
+
+        if (playerObject != null)
+            playerObject.SetActive(false);
+
+        if (playerMovement != null)
+            playerMovement.IsInVehicle = true;
+
+        QuickSaveSystem.Instance?.SetCurrentVehicle(
+            carObject != null ? carObject.transform : transform,
+            true
+        );
+
+        if (playerVisualRoot != null)
+            playerVisualRoot.SetActive(false);
+
+        if (playerCC != null)
+            playerCC.enabled = false;
+
+        if (playerObject != null && seatPosition != null)
+        {
+            playerObject.transform.SetPositionAndRotation(
+                seatPosition.position,
+                seatPosition.rotation
+            );
+        }
+
+        if (carCamera != null)
+            carCamera.SetActive(true);
+
+        if (playerCamera != null)
+            playerCamera.SetActive(false);
+
+        if (PlayerGUI != null)
+            PlayerGUI.SetActive(true);
+
+        SetGunUIVisible(false);
+
+        if (wm != null)
+            wm.enabled = false;
+
+        if (carCameras != null && carCameras.Length > 0)
+        {
+            currentCameraIndex = 0;
+
+            for (int i = 0; i < carCameras.Length; i++)
+            {
+                if (carCameras[i] != null)
+                    carCameras[i].SetActive(i == 0);
+            }
+
+            currentCameraTarget = carCameras[0] != null ? carCameras[0].transform : null;
+        }
+
+        if (carRaceUiRoot != null)
+            carRaceUiRoot.SetActive(false);
+
+        _useFreelock = false;
+        ResetFreelockDefaults();
+
+        if (carObject != null)
+            MinimapTargetProvider.Instance?.SetVehicleTarget(carObject.transform);
+
+        ForceHideCarHud();
+        SetupHud(controller);
+
+        OnEnterCar?.Invoke();
+        OnAnyPlayerEnteredCar?.Invoke(this);
     }
 
     void EnableFreelockFromCurrentCamera()
@@ -637,6 +797,42 @@ public class CarInteraction : MonoBehaviour
 
         _activeHud = null;
         _hudWasInstantiated = false;
+    }
+
+    private void ForceHideCarHud()
+    {
+        if (_activeHud != null)
+        {
+            if (_activeHud.speedometerRoot != null)
+                _activeHud.speedometerRoot.SetActive(false);
+
+            if (_hudWasInstantiated)
+                Destroy(_activeHud.gameObject);
+
+            _activeHud = null;
+            _hudWasInstantiated = false;
+        }
+
+        if (legacySpeedometerInScene != null)
+            legacySpeedometerInScene.SetActive(false);
+
+        SpeedometerUI[] speedometers = FindObjectsByType<SpeedometerUI>(FindObjectsSortMode.None);
+
+        for (int i = 0; i < speedometers.Length; i++)
+        {
+            SpeedometerUI speedometer = speedometers[i];
+
+            if (speedometer == null)
+                continue;
+
+            speedometer.carController = null;
+            speedometer.nitroSystem = null;
+
+            if (speedometer.speedometerRoot != null)
+                speedometer.speedometerRoot.SetActive(false);
+            else
+                speedometer.gameObject.SetActive(false);
+        }
     }
 
     void ResetFreelockDefaults()

@@ -1200,10 +1200,15 @@ public class PlayerMovement : MonoBehaviour, IWettable
         ladderTransform = null;
     }
 
-    // Używane przez system save/load do przywrócenia staminy
+    // QUICK SAVE-LOAD System
     public void ForceSetStamina(float value)
     {
         currentStamina = Mathf.Clamp(value, 0f, staminaMax);
+
+        staminaDepleted = currentStamina <= exhaustedThreshold;
+        staminaRegenTimer = staminaDepleted ? regenCooldown : 0f;
+
+        UpdateStaminaUI();
     }
 
     private void SetLandingMarkerActive(bool active)

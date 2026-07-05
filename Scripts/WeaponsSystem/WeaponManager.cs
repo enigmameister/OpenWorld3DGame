@@ -260,9 +260,6 @@ public class WeaponManager : MonoBehaviour
         return slots.GetSlotObject(index);
     }
 
-
- 
-
     public WeaponStateSnapshotController.WeaponSnapshot GetSnapshot()
     {
         return snapshots.GetSnapshot();

@@ -6,21 +6,21 @@ using System;
 public class PlayerStats : MonoBehaviour, IDamageable
 {
     [Header("Citizen ID")]
-    [SerializeField] public string citizenId;   // null / empty = brak ID
+    [SerializeField] public string citizenId;
     public bool HasCitizenID => !string.IsNullOrEmpty(citizenId);
 
     public string CitizenID => citizenId;
 
-    [Header("Statystyki gracza")]
+    [Header("Player stats")]
     public int maxHP = 100;
     public int maxArmor = 100;
 
     public int currentHP;
     public int currentArmor = 0;
     public bool IsDead { get; private set; } = false;
-    public GameObject deathScreen; // nowy GameObject zamiast CanvasGroup
+    public GameObject deathScreen; 
     public TMP_Text deathMessage;
-    public static event Action<string> OnPlayerDied;   // kto zabił (name)
+    public static event Action<string> OnPlayerDied;   
     public string LastAttackerName { get; private set; } = "";
 
     [Header("UI")]
@@ -29,21 +29,23 @@ public class PlayerStats : MonoBehaviour, IDamageable
 
     // ========= UNDERWATER / OXYGEN =========
     [Header("Underwater / Oxygen")]
-    public float oxygenMax = 12f;             // sekundy pełnego tlenu
-    public float oxygenDrainPerSec = 1.0f;    // spadek pod wodą
-    public float oxygenRegenPerSec = 4.0f;    // regen po wynurzeniu
-    [Tooltip("Co ile sekund zadawać kolejne obrażenia z tonięcia.")]
+    public float oxygenMax = 12f;             // Oxygen full
+    public float oxygenDrainPerSec = 1.0f;    // Drain underwater
+    public float oxygenRegenPerSec = 4.0f;    // Regen Oxygen
+
+    [Tooltip("Damage freq during drowning")]
     public float drowningTick = 1.0f;
-    [Tooltip("Progresywna sekwencja obrażeń (HL-style).")]
+
+    [Tooltip("Damage sequence underwater")]
+
     public int[] drowningDamageSeq = new[] { 5, 10, 20, 30 };
-    [Range(0f, 1f)] public float postDrownHealCap = 0.60f;  // np. 60% max HP
-    [Range(0.5f, 5f)] public float postDrownHealPerSec = 12f; // tempo „cyklicznie”
+    [Range(0f, 1f)] public float postDrownHealCap = 0.60f;  
+    [Range(0.5f, 5f)] public float postDrownHealPerSec = 12f; 
     private bool _tookDrownDamage;
     private Coroutine _postDrownHealCo;
 
-
-    [SerializeField] private UnityEngine.UI.Image oxygenBar;   // pasek O2
-    [SerializeField] private GameObject oxygenRoot;             // kontener UI
+    [SerializeField] private UnityEngine.UI.Image oxygenBar;   
+    [SerializeField] private GameObject oxygenRoot;             
 
     [HideInInspector] public bool isUnderwater = false;
     [Range(0f, 30f)] public float postDrownRegenPerSec = 4f;
@@ -55,18 +57,18 @@ public class PlayerStats : MonoBehaviour, IDamageable
 
     public TextMeshProUGUI moneyText;
 
-    [Header("Pieniądze")]
+    [Header("Money")]
     public int money = 0;
     private int previousMoney;
 
-    [Header("Money charging (płynne zasilanie)")]
-    [Tooltip("Ile $ na sekundę ma przybywać podczas doładowania.")]
+    [Header("Money charging")]
+    [Tooltip("How much money charge per second?")]
     public float moneyChargePerSecond = 250f;
 
-    [Tooltip("Kolor tekstu gdy pieniądze się doładowują.")]
+    [Tooltip("Money text color druing charing")]
     public Color moneyChargingColor = Color.yellow;
 
-    [Tooltip("Kolor normalny tekstu po zakończeniu doładowania. Jeśli alfa=0, zostanie aktualny.")]
+    [Tooltip("Color after charged money in InventoryUI")]
     public Color moneyNormalColor = new Color(0, 0, 0, 0);
 
     private Coroutine _moneyChargeCo;
@@ -79,7 +81,7 @@ public class PlayerStats : MonoBehaviour, IDamageable
     void Start()
     {
         currentHP = maxHP;
-        currentArmor = 0; // ← Start bez armoru
+        currentArmor = 0;
         UpdateUI();
 
         _oxygen = oxygenMax;
@@ -116,7 +118,7 @@ public class PlayerStats : MonoBehaviour, IDamageable
         CancelMoneyCharging();
 
         money = Mathf.Max(0, amount);
-        previousMoney = money;   // żeby Update() nie nadpisało UI po chwili
+        previousMoney = money;
         UpdateMoneyUI();
     }
 
@@ -127,19 +129,11 @@ public class PlayerStats : MonoBehaviour, IDamageable
 
     }
 
-    /* Funkcja do formatowania pieniędzy gdziekolwiek
-        public string FormatCash(int amount)
-        {
-            return amount.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + "$";
-        }
-    */
-
     public void AddMoneySmooth(int amount)
     {
         amount = Mathf.Max(0, amount);
         if (amount == 0) return;
 
-        // jeśli nie ładujemy – start
         if (_moneyChargeCo == null)
         {
             _moneyChargeTarget = money + amount;
@@ -159,7 +153,6 @@ public class PlayerStats : MonoBehaviour, IDamageable
         }
         else
         {
-            // jeśli już ładujemy – dokładamy do celu
             _moneyChargeTarget += amount;
         }
     }
@@ -208,21 +201,21 @@ public class PlayerStats : MonoBehaviour, IDamageable
             moneyText.color = _moneyOriginalColor;
     }
 
-
     public void TakeDamage(int damage)
     {
         if (CheatState.Invincible) return; // SAIYAN
-        TakeDamage(damage, "Środowisko");
+        TakeDamage(damage, "Enviornment");
     }
+
     public void TakeDamage(int damage, string attackerName)
     {
         if (CheatState.Invincible) return; // SAIYAN
         if (IsDead) return;
 
         int remainingDamage = damage;
-        LastAttackerName = attackerName;  // <- zapamiętaj
+        LastAttackerName = attackerName;  
 
-        Debug.Log($"🩸 Gracz otrzymał {damage} dmg od {attackerName}");
+        Debug.Log($"🩸 Player received {damage} dmg from {attackerName}");
 
         if (currentArmor > 0)
         {
@@ -242,7 +235,6 @@ public class PlayerStats : MonoBehaviour, IDamageable
             OnDeath();
         }
 
-        // 🔴 Czerwony overlay TYLKO jeśli to NIE jest skażenie
         if (DamageIndicatorUI.Instance && attackerName != "Contamination")
         {
             DamageIndicatorUI.Instance.TriggerFlash(damage);
@@ -261,7 +253,7 @@ public class PlayerStats : MonoBehaviour, IDamageable
         if (IsDead) return;
         IsDead = true;
 
-        MouseLook.IsLookLocked = true; // 🔒 Zablokuj rozglądanie natychmiast
+        MouseLook.IsLookLocked = true; // Freelock block
 
         var fallCam = GetComponent<FallImpactCamera>();
         if (fallCam != null)
@@ -278,14 +270,13 @@ public class PlayerStats : MonoBehaviour, IDamageable
             deathScreen.SetActive(true);
 
         if (deathMessage != null)
-            deathMessage.text = "Gracz nie żyje";
+            deathMessage.text = "Player Died";
 
         // powiadom NPC-ów kto zabił
-        try { OnPlayerDied?.Invoke(LastAttackerName); } catch { /* no-op */ }
+        try { OnPlayerDied?.Invoke(LastAttackerName); } catch {  }
 
         StartCoroutine(DeathLogDelay());
     }
-
 
     IEnumerator FallOver()
     {
@@ -295,7 +286,7 @@ public class PlayerStats : MonoBehaviour, IDamageable
         Quaternion startRot = Camera.main.transform.localRotation;
         Quaternion endRot = Quaternion.Euler(0f, 0f, 90f);
 
-        while (elapsed < duration && IsDead)  // 👈 sprawdzaj IsDead
+        while (elapsed < duration && IsDead)
         {
             elapsed += Time.deltaTime;
             Camera.main.transform.localRotation =
@@ -326,7 +317,6 @@ public class PlayerStats : MonoBehaviour, IDamageable
 
     }
 
-    // Logika oddychania pod wodą i duszenia
     public void SetUnderwaterState(bool underwater)
     {
         isUnderwater = underwater;
@@ -336,7 +326,7 @@ public class PlayerStats : MonoBehaviour, IDamageable
 
         if (!underwater && _tookDrownDamage)
         {
-            // startuj leczenie do progu (np. 60%), jednorazowo
+       
             if (_postDrownHealCo != null) StopCoroutine(_postDrownHealCo);
             _postDrownHealCo = StartCoroutine(PostDrownHeal());
             _tookDrownDamage = false;
@@ -350,9 +340,9 @@ public class PlayerStats : MonoBehaviour, IDamageable
     private IEnumerator PostDrownHeal()
     {
         int target = Mathf.RoundToInt(maxHP * postDrownHealCap);
-        target = Mathf.Max(target, currentHP); // nie cofaj, tylko ewentualnie podnieś do progu
+        target = Mathf.Max(target, currentHP); 
 
-        float tick = 0.5f;           // co pół sekundy
+        float tick = 0.5f;           
         int perTick = Mathf.Max(1, Mathf.RoundToInt(postDrownHealPerSec * tick));
 
         while (currentHP < target && !isUnderwater && !IsDead)
@@ -362,7 +352,6 @@ public class PlayerStats : MonoBehaviour, IDamageable
             yield return new WaitForSeconds(tick);
         }
     }
-
     IEnumerator HideOxygenBarAfterDelay()
     {
         while (_oxygen < oxygenMax)
@@ -411,7 +400,6 @@ public class PlayerStats : MonoBehaviour, IDamageable
                 float fill = (oxygenMax > 0f) ? (_oxygen / oxygenMax) : 0f;
                 oxygenBar.fillAmount = Mathf.Clamp01(fill);
 
-                // kolor: jasny niebieski -> zielony -> żółty -> pomarańcz -> czerwony
                 Color cCyan = new Color(0.65f, 0.92f, 1f);
                 Color cGreen = Color.green;
                 Color cYellow = Color.yellow;
@@ -444,10 +432,7 @@ public class PlayerStats : MonoBehaviour, IDamageable
 
         if (reason == "Contamination")
         {
-            // ✔ szarpnięcie kamerą jak przy upadku
             ui.TriggerHitTilt(damage);
-
-            // ✔ zielone strzałki, dłużej
             ui.TriggerAllColored(
                 damage,
                 ui.toxicArrowColor,
@@ -463,7 +448,7 @@ public class PlayerStats : MonoBehaviour, IDamageable
     IEnumerator DeathLogDelay()
     {
         yield return new WaitForSeconds(5f);
-        if (IsDead)                    // 👈 tylko jeśli nadal martwy
+        if (IsDead)
             Debug.Log("🪦 Gracz nie żyje");
     }
 
@@ -478,7 +463,7 @@ public class PlayerStats : MonoBehaviour, IDamageable
         public float stamina;
         public float underwaterStamina;
 
-        public int money;   // 💰 NOWE
+        public int money;  
     }
 
     public PlayerStatsSnapshot GetSnapshot()
@@ -494,13 +479,13 @@ public class PlayerStats : MonoBehaviour, IDamageable
 
         s.underwaterStamina = _oxygen;
 
-        s.money = money;     // 💰 DODANE
+        s.money = money;     
 
         return s;
     }
     public void ApplySnapshot(PlayerStatsSnapshot s)
     {
-        CancelMoneyCharging(); // ✅ ważne, żeby nie nadpisywało po chwili
+        CancelMoneyCharging(); 
 
         currentHP = s.health;
         currentArmor = s.armor;
@@ -511,38 +496,40 @@ public class PlayerStats : MonoBehaviour, IDamageable
         if (pm != null)
             pm.ForceSetStamina(s.stamina);
 
+        Debug.Log($"[QuickLoad] Restore stamina={s.stamina}");
+
         _oxygen = s.underwaterStamina;
 
         money = s.money;
-        previousMoney = money;   // ✅ spójność z resztą (miałeś to w SetMoney)
+        previousMoney = money;   
         UpdateMoneyUI();
     }
 
     public void ResetDeathStateAfterLoad()
     {
-        // odblokuj logikę
+        // Unlock logic
         IsDead = false;
         LastAttackerName = "";
 
-        // odblokuj rozglądanie
+        // Unlock freelock
         MouseLook.IsLookLocked = false;
 
-        // przywróć kursor do stanu gry
+        // Restore cursor 
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
 
-        // schowaj ekran śmierci
+        // Hide death screen
         if (deathScreen != null)
             deathScreen.SetActive(false);
 
-        // postaw ciało z powrotem
+        // Restore Body Position
         transform.rotation = Quaternion.Euler(
             0f,
             transform.rotation.eulerAngles.y,
             0f
         );
 
-        // wyprostuj kamerę (kasujemy tilt z FallOver)
+        // Reset cam
         if (Camera.main != null)
             Camera.main.transform.localRotation = Quaternion.identity;
     }

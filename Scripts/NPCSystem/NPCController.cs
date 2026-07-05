@@ -1496,7 +1496,6 @@ public class NPCController : MonoBehaviour, IDamageable
 
         return true;
     }
-
     private IEnumerator FireBurst(float shootDistance)
     {
         if (equippedGun == null)
