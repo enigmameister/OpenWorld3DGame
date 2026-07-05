@@ -1,67 +1,71 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 using UnityEngine.AI;
 using Random = UnityEngine.Random;
 
 public class NPCController : MonoBehaviour, IDamageable
 {
-    private NPCCore core;
+    public enum NPCReactionType
+    {
+        Coward,
+        Aggressive,
+        Fighter
+    }
 
-    public enum NPCReactionType { Coward, Aggressive, Fighter }
+    public enum FighterVariant
+    {
+        Blue,
+        Black
+    }
 
-    [Header("Typ zachowania")]
-    public NPCReactionType reactionType = NPCReactionType.Coward;
+    // =========================================================
+    // PUBLIC API
+    // =========================================================
 
-    [Header("Fighter wariant")]
-    [SerializeField] private FighterVariant fighterVariant = FighterVariant.Blue; // dotyczy tylko Fighter
-    public enum FighterVariant { Blue, Black }
+    public bool IsDead => isDead;
+    public bool IsProvoked => isProvoked;
+    public bool IsInteractionLocked => interactionDisabledForever || isFleeing;
+    public bool IsScaredVisible => scaredIcon != null && scaredIcon.activeSelf;
+    public Color DefaultColor => defaultColor;
 
-    [Header("Coward – ucieczka i blokady")]
-    [SerializeField] private bool propagatePanicToWitnesses = true;
-    [SerializeField] private float fleeDuration = 6.0f;
-    [SerializeField] private float fleeFarDistance = 18.0f;   // od jakiej odległości czuje się „bezpiecznie”
-    [SerializeField] private LayerMask npcMask;               // warstwa NPC (do świadków)
-    [SerializeField] private Collider[] interactionColliders; // collidery „E”
-    [SerializeField] private Collider[] physicalColliders;    // collidery ciała NPC (do IgnoreCollision z graczem)
+    public NPCReactionType GetReactionType() => reactionType;
+    public FighterVariant GetFighterVariant() => fighterVariant;
 
-    [Header("Fighter – incydenty Cowardów")]
-    [SerializeField] private float patrolInvestigateTime = 6f;
-    [SerializeField] private float investigateArriveTolerance = 1.2f;
+    public bool IsAggressiveBlackVariant() =>
+        reactionType == NPCReactionType.Aggressive && fighterVariant == FighterVariant.Black;
 
-    private bool isFleeing;
-    private bool interactionDisabledForever;
-    private Vector3 lastKnownAttackerPos;
+    public static event System.Action<Vector3> OnCowardReportedLastKnownPos;
+    public static System.Action<NPCController, string> OnNPCDied;
 
-    // Prosty „bus” zdarzeń – globalny
-    public static event System.Action<Vector3> OnCowardReportedLastKnownPos;       // po ucieczce
+    // =========================================================
+    // IDENTITY / CORE
+    // =========================================================
 
-    [Header("WeaponsINV")]
-    public NPCGun[] availableWeapons;
-    private NPCGun equippedGun;
-    [SerializeField] private string assignedWeaponName;
+    [Header("Core")]
+    [SerializeField] private NPCCore core;
 
-    [Header("NPC Weapon Roots")]
-    [SerializeField] private Transform weaponsListRoot;
+    [Header("Behavior Type")]
+    [SerializeField] private NPCReactionType reactionType = NPCReactionType.Coward;
 
-    [Header("Feature Flags")]
-    [SerializeField] private bool useWeaponSystem = true;
-    [SerializeField] private bool allowWeaponDrop = true;
+    [Header("Fighter Variant")]
+    [SerializeField] private FighterVariant fighterVariant = FighterVariant.Blue;
 
-    [Header("Drop / Loot")]
-    [Range(0f, 100f)] public float weaponDropChance = 50f;
-    [SerializeField] private Transform weaponDropPoint;
+    // =========================================================
+    // HEALTH
+    // =========================================================
 
-    [Header("WeaponPickup prefabs")]
-    public GameObject GlockPickup;
-    public GameObject M4A1Pickup;
-    public GameObject AK97Pickup;
-    public GameObject SPAS12Pickup;
+    [Header("Health")]
+    [SerializeField] private float maxHP = 100f;
 
-    [Header("Statystyki HP")]
-    public float maxHP = 100f;
     private float currentHP;
+    private bool isDead;
+    private bool deathSequenceStarted;
+    private string lastAttacker = "Unknown";
+
+    // =========================================================
+    // AI SETTINGS
+    // =========================================================
 
     [Header("AI Settings")]
     [SerializeField] private float interactRange = 2.5f;
@@ -70,131 +74,467 @@ public class NPCController : MonoBehaviour, IDamageable
     [SerializeField] private float fleeDistance = 20f;
     [SerializeField] private float reactionDuration = 30f;
 
-    [Header("Strzelanie (NPC)")]
-    public int shotsPerBurst = 2;
-    public float fireCooldown = 1.5f;
-    public float aimDelay = 0.15f;
-    public float minShootingDistance = 5f;
+    [Header("Coward Flee / Interaction Lock")]
+    [SerializeField] private bool propagatePanicToWitnesses = true;
+    [SerializeField] private float fleeDuration = 6.0f;
+    [SerializeField] private float fleeFarDistance = 18.0f;
+    [SerializeField] private LayerMask npcMask;
+    [SerializeField] private Collider[] interactionColliders;
+    [SerializeField] private Collider[] physicalColliders;
 
-    [Header("Kolory / trafienia")]
-    [SerializeField] private Renderer[] bodyRenderers;
-    [SerializeField] private float hitFlashDuration = 0.5f;
-
-    [Header("Hit FX (opcjonalnie)")]
-    [SerializeField] private GameObject bloodFxPrefab;
-    [SerializeField] private float bloodFxScale = 1f;
-    [SerializeField] private float bloodFxLifetime = 2f;
-    [SerializeField] private AudioClip hurtSfx;
-    [SerializeField] private AudioSource audioSource; // opcjonalnie (może być null)
-
-    // kolor bazowy (nieserializowany)
-    private Color defaultColor;
-    public Color DefaultColor => defaultColor;
-
-    [Header("Wzrok (Aggressive/Fighter)")]
-    [SerializeField] private float viewDistance = 30f;
-    [SerializeField, Range(10f, 180f)] private float viewAngle = 110f;
-    [SerializeField] private LayerMask losObstaclesMask = ~0; // warstwy, które BLOKUJĄ wzrok
-                                                              // na górze pól// na górze pól
-    private bool _defenseMode; // Fighter wchodzi do walki tylko, gdy broni Cowarda albo został trafiony
-
-    [Header("Walka – sekwencja")]
-    // NPCController.cs
-    private Vector3 _lastPlayerPos;
-    private bool _playerPosInitialized = false;
-
-    [Header("Vertical Awareness (gdy gracz wysoko)")]
-    [SerializeField] private float verticalAimTolerance = 2.5f;   // jeśli |ΔY| > tego – NIE strzelaj
-    [SerializeField] private float campUnderPlayerRadius = 4.0f;   // promień „czatowania” pod graczem
-    [SerializeField] private float campRepathInterval = 0.8f;      // jak często odświeżać trasę „pod spodem”
-    [SerializeField] private float maxApproachSpeedWhenCamping = 6.5f; // prędkość w trybie czatowania
-
-    [SerializeField] private float faceAngleThreshold = 15f;        // stopnie – kiedy uznajemy, że patrzy na gracza
-    [SerializeField] private float weaponDrawTime = 0.05f;          // delikatna zwłoka „wyciągania broni”
-    [SerializeField] private float desiredShootingDistance = 12f;  // dystans docelowy do strzału
-    [SerializeField] private float retreatBuffer = 0.75f;          // ile się odsunąć, gdy za blisko
-    private Coroutine attackCoroutine;
-    private float _nextRepath = 0f;
-
-    [Header("Słuch (strzał w pobliżu)")]
-    [SerializeField] private float shotHearRadius = 18f;
-    [SerializeField] private float shotLOSProbeHeight = 1.6f;
-    [SerializeField] private float investigateFromShotTime = 4.0f;
-
-    [Header("Reakcja na strzał w pobliżu")]
-    [SerializeField] private float reactShotMaxDistance = 30f;
-    [SerializeField] private float nearMissThreshold = 2.5f;
-    [SerializeField] private LayerMask shotHearingObstaclesMask = ~0;
+    [Header("Fighter Coward Incidents")]
+    [SerializeField] private float patrolInvestigateTime = 6f;
+    [SerializeField] private float investigateArriveTolerance = 1.2f;
 
     [Header("Aggro Memory")]
     [SerializeField] private float losePlayerDistance = 35f;
     [SerializeField] private float searchLastSeenTime = 4f;
 
+    private bool isProvoked;
+    private bool isFleeing;
+    private bool interactionDisabledForever;
+    private bool inVictoryState;
+    private bool _defenseMode;
+
+    private float reactionEndTime;
+    private float cowardFleeSafeUntil = -999f;
+    private Vector3 lastKnownAttackerPos;
+
     private Vector3 lastSeenPlayerPosition;
     private float lastSeenPlayerTime = -999f;
-    private bool searchingLastSeenPosition = false;
+    private bool searchingLastSeenPosition;
 
-    private bool investigatingShot = false;
-    private float investigateShotUntil = 0f;
-    private Vector3 lastShotPoint;
-    // wewnętrzne
+    // =========================================================
+    // MOVEMENT / NAVIGATION
+    // =========================================================
+
+    [Header("Vertical Awareness")]
+    [SerializeField] private float verticalAimTolerance = 2.5f;
+    [SerializeField] private float campUnderPlayerRadius = 4.0f;
+    [SerializeField] private float campRepathInterval = 0.8f;
+    [SerializeField] private float maxApproachSpeedWhenCamping = 6.5f;
+
+    [Header("Combat Positioning")]
+    [SerializeField] private float faceAngleThreshold = 15f;
+    [SerializeField] private float weaponDrawTime = 0.05f;
+    [SerializeField] private float desiredShootingDistance = 12f;
+    [SerializeField] private float retreatBuffer = 0.75f;
+
     private NavMeshAgent agent;
     private Transform player;
     private PlayerStats playerStats;
-    private bool isProvoked = false;
-    private bool isDead = false;
-    private float reactionEndTime;
 
+    private Quaternion startRotation;
+    private Coroutine attackCoroutine;
+    private float _nextRepath;
+
+    private Vector3 _lastPlayerPos;
+    private bool _playerPosInitialized;
+
+    [Header("Combat Repath Optimization")]
+    [SerializeField] private float chaseRepathInterval = 0.18f;
+    [SerializeField] private float retreatRepathInterval = 0.22f;
+    [SerializeField] private float minCombatDestinationMoveDelta = 0.75f;
+
+    private float nextCombatDestinationUpdateTime;
+    private Vector3 lastCombatDestination;
+    private bool hasLastCombatDestination;
+
+    // =========================================================
+    // PERCEPTION / VISION / HEARING
+    // =========================================================
+
+    [Header("Vision")]
+    [SerializeField] private float viewDistance = 30f;
+    [SerializeField, Range(10f, 180f)] private float viewAngle = 110f;
+    [SerializeField] private LayerMask losObstaclesMask = ~0;
+
+    [Header("Shot Hearing")]
+    [SerializeField] private float shotHearRadius = 18f;
+    [SerializeField] private float shotLOSProbeHeight = 1.6f;
+    [SerializeField] private float investigateFromShotTime = 4.0f;
+
+    [Header("Shot Reaction")]
+    [SerializeField] private float reactShotMaxDistance = 30f;
+    [SerializeField] private float nearMissThreshold = 2.5f;
+    [SerializeField] private LayerMask shotHearingObstaclesMask = ~0;
+
+    private bool investigatingShot;
+    private float investigateShotUntil;
+    private Vector3 lastShotPoint;
+
+    [Header("Rear Awareness / Sprint Noise")]
+    [SerializeField] private bool useRearSprintAwareness = true;
+
+    [Tooltip("NPC reacts when the player sprints with a weapon behind or near their back.")]
+    [SerializeField] private bool rearAwarenessRequiresHeldWeapon = true;
+
+    [Tooltip("NPC reacts when the player moves fast behind their back within this radius.")]
+    [SerializeField] private float rearAwarenessRadius = 5.0f;
+
+    [Tooltip("Minimum horizontal player speed required to trigger rear awareness.")]
+    [SerializeField] private float rearAwarenessMinSpeed = 3.2f;
+
+    [Tooltip("Player must be behind or rear-side of the NPC by at least this angle.")]
+    [SerializeField, Range(60f, 179f)] private float rearAwarenessMinBackAngle = 90f;
+
+    [Tooltip("How often this NPC can react to sprint noise from behind.")]
+    [SerializeField] private float rearAwarenessCooldown = 0.35f;
+
+    [Tooltip("If TRUE, walls block rear awareness.")]
+    [SerializeField] private bool rearAwarenessRequiresLineOfSight = true;
+
+    [Tooltip("How long the NPC keeps looking at the player after hearing sprint noise.")]
+    [SerializeField] private float rearAwarenessLookHoldTime = 1.0f;
+
+    [Tooltip("How long rear awareness suppresses automatic aggro from normal vision.")]
+    [SerializeField] private float rearAwarenessAutoAggroSuppressTime = 1.0f;
+
+    [SerializeField] private LayerMask rearAwarenessObstacleMask = ~0;
+
+    [Tooltip("How long the NPC stops after hearing sprint noise.")]
+    [SerializeField] private float rearAwarenessStopDuration = 1.0f;
+
+    private float rearAwarenessStopUntil;
+    private bool rearAwarenessPausedAgent;
+    private float nextRearAwarenessTime;
+    private float rearAwarenessLookUntil;
+    private float rearAwarenessSuppressAutoAggroUntil;
+    private Vector3 rearAwarenessLookTarget;
+
+    private CharacterController playerCharacterController;
+    private Rigidbody playerRigidbody;
+    private PlayerMovement playerMovement;
+    private WeaponManager playerWeaponManager;
+    private Vector3 lastRearAwarenessPlayerPos;
+    private bool rearAwarenessPlayerPosInitialized;
+
+    // =========================================================
+    // NPC SHOOTING
+    // =========================================================
+
+    [Header("NPC Shooting")]
+    [SerializeField] private int shotsPerBurst = 2;
+    [SerializeField] private float fireCooldown = 1.5f;
+    [SerializeField] private float aimDelay = 0.15f;
+    [SerializeField] private float minShootingDistance = 5f;
+
+    [Header("Friendly Fire")]
+    [SerializeField] private bool avoidSameTypeFriendlyFire = true;
+
+    [Tooltip("Small radius used to detect friendly NPCs in the shooting line.")]
+    [SerializeField] private float friendlyFireProbeRadius = 0.18f;
+
+    private static readonly RaycastHit[] FriendlyFireHits = new RaycastHit[16];
+
+    // =========================================================
+    // WEAPONS / LOOT
+    // =========================================================
+
+    [Header("NPC Weapons")]
+    [SerializeField] private bool useWeaponSystem = true;
+    [SerializeField] private NPCGun[] availableWeapons;
+    [SerializeField] private Transform weaponsListRoot;
+    [SerializeField] private string assignedWeaponName;
+
+    [Header("Drop / Loot")]
+    [SerializeField] private bool allowWeaponDrop = true;
+    [Range(0f, 100f)]
+    [SerializeField] private float weaponDropChance = 50f;
+    [SerializeField] private Transform weaponDropPoint;
+
+    [Header("Weapon Pickup Prefabs")]
+    [SerializeField] private GameObject GlockPickup;
+    [SerializeField] private GameObject M4A1Pickup;
+    [SerializeField] private GameObject AK97Pickup;
+    [SerializeField] private GameObject SPAS12Pickup;
+
+    private NPCGun equippedGun;
+
+    // =========================================================
+    // VISUALS / HIT FEEDBACK
+    // =========================================================
+
+    [Header("Body Colors / Hit Flash")]
+    [SerializeField] private Renderer[] bodyRenderers;
+    [SerializeField] private float hitFlashDuration = 0.5f;
+
+    [Header("Hit FX")]
+    [SerializeField] private GameObject bloodFxPrefab;
+    [SerializeField] private float bloodFxScale = 1f;
+    [SerializeField] private float bloodFxLifetime = 2f;
+    [SerializeField] private AudioClip hurtSfx;
+    [SerializeField] private AudioSource audioSource;
+
+    private Color defaultColor;
     private MaterialPropertyBlock _mpb;
     private Coroutine flashCoroutine;
-    private bool inVictoryState = false;
-    private static float panicPropagationRadius = 15f;
-    private float cowardFleeSafeUntil = -999f;
-    private Quaternion startRotation;
-
-    private Rigidbody rootRb;
-    private Collider rootCol;
-
-    // zapamiętanie atakującego (do eventu śmierci)
-    private string lastAttacker = "Unknown";
-    private Animator cachedAnimator;
-    private bool deathSequenceStarted = false;
-
-    // globalny event śmierci NPC (dla świadków – obsługuje NPCReactive)
-    public static System.Action<NPCController, string> OnNPCDied;
 
     private static readonly int BaseColorID = Shader.PropertyToID("_BaseColor");
     private static readonly int ColorID = Shader.PropertyToID("_Color");
 
-    public bool IsInteractionLocked => interactionDisabledForever || isFleeing;
-    public bool IsScaredVisible => scaredIcon != null && scaredIcon.activeSelf;
+    // =========================================================
+    // ALERT ICONS
+    // =========================================================
 
-    [SerializeField] private GameObject alertIcon;      // już masz
-    [SerializeField] private SpriteRenderer alertSprite; // już masz
+    [Header("Alert Icons")]
+    [SerializeField] private GameObject alertIcon;
+    [SerializeField] private SpriteRenderer alertSprite;
+    [SerializeField] private GameObject scaredIcon;
+    [SerializeField] private SpriteRenderer scaredSpriteRenderer;
 
-    [Header("Alert Sprites")]
-    [SerializeField] private GameObject scaredIcon;      // ⬅️ NOWE: obiekt „Scared” (wyłączony w prefabie)
-    [SerializeField] private SpriteRenderer scaredSpriteRenderer; // ⬅️ opcjonalnie (jeśli chcesz sterować kolorem)
+    // =========================================================
+    // RAGDOLL / PHYSICS
+    // =========================================================
 
-    private bool pendingBackstabFall = false;
-    private bool pendingMeleeFall = false;
+    private Rigidbody rootRb;
+    private Collider rootCol;
+
+    private bool pendingBackstabFall;
+    private bool pendingMeleeFall;
     private Vector3 pendingMeleeAttackerPos;
 
-    private bool pendingVehicleFall = false;
+    private bool pendingVehicleFall;
     private Vector3 pendingVehicleVelocity;
     private float pendingVehicleSpeedKmh;
-    private Vector3 pendingVehicleHitPoint;
 
-    // ===== PUBLICZNE WŁAŚCIWOŚCI/INTERFEJS =====
-    public bool IsDead => isDead;
-    public bool IsProvoked => isProvoked;
-    public NPCReactionType GetReactionType() => reactionType;
-    public FighterVariant GetFighterVariant() => fighterVariant;
-    public bool IsAggressiveBlackVariant() =>
-        reactionType == NPCReactionType.Aggressive && fighterVariant == FighterVariant.Black;
+    // =========================================================
+    // CACHED COMPONENTS
+    // =========================================================
 
-    /// <summary>Z zewnątrz (NPCReactive) możesz wymusić przejście w agresję.</summary>
-    public void ForceReactToAggression() => StartAggression(byHit: false);
+    private Animator cachedAnimator;
+    private NPCReactive cachedReactive;
+    private Billboard cachedBillboard;
+
+    // =========================================================
+    // OPTIMIZATION
+    // =========================================================
+
+    [Header("Optimization")]
+    [SerializeField] private float visionRefreshInterval = 0.12f;
+
+    private static readonly Collider[] PanicOverlapBuffer = new Collider[32];
+    private float nextVisionCheckTime;
+    private bool cachedPlayerInFrontAndVisible;
+
+    private static float panicPropagationRadius = 15f;
+
+    // =========================================================
+    // DEBUG
+    // =========================================================
+
+    [Header("Debug")]
+    [SerializeField] private bool debugLogs = false;
+
+    private void Awake()
+    {
+        agent = GetComponent<NavMeshAgent>();
+        rootRb = GetComponent<Rigidbody>();
+        cachedAnimator = GetComponentInChildren<Animator>(true);
+        cachedReactive = GetComponent<NPCReactive>();
+        cachedBillboard = GetComponent<Billboard>();
+
+        if (core == null)
+            core = GetComponent<NPCCore>();
+
+        var cols = GetComponents<Collider>();
+        rootCol = null;
+
+        if (weaponsListRoot == null)
+        {
+            Transform body = transform.Find("Body");
+            if (body != null)
+                weaponsListRoot = body.Find("WeaponsList");
+        }
+
+        foreach (var c in cols)
+        {
+            if (c != null && !c.isTrigger)
+            {
+                rootCol = c;
+                break;
+            }
+        }
+
+        if ((rootCol == null || rootCol.isTrigger) && physicalColliders != null)
+        {
+            for (int i = 0; i < physicalColliders.Length; i++)
+            {
+                var c = physicalColliders[i];
+                if (c != null && !c.isTrigger)
+                {
+                    rootCol = c;
+                    break;
+                }
+            }
+        }
+
+        startRotation = transform.rotation;
+
+        ResolvePlayerRefs();
+
+        RefreshBodyRenderers();
+        _mpb = new MaterialPropertyBlock();
+
+        RecomputeBaseColor();
+        currentHP = maxHP;
+
+        if (!alertSprite && alertIcon) alertSprite = alertIcon.GetComponent<SpriteRenderer>();
+        HideAllIcons();
+
+        if (scaredIcon && !scaredSpriteRenderer)
+            scaredSpriteRenderer = scaredIcon.GetComponent<SpriteRenderer>();
+        if (scaredIcon) scaredIcon.SetActive(false);
+
+        if (rootRb != null)
+        {
+            rootRb.isKinematic = true;
+            rootRb.useGravity = false;
+            rootRb.interpolation = RigidbodyInterpolation.Interpolate;
+            rootRb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+        }
+    }
+
+    private void Start()
+    {
+        if (useWeaponSystem)
+            AssignRandomWeapon();
+
+        RefreshBodyRenderers();
+        ApplyBodyColor(defaultColor);
+
+        InvokeRepeating(nameof(PickNewDestination), 5f, 10f);
+
+        if (reactionType == NPCReactionType.Aggressive && fighterVariant == FighterVariant.Black)
+        {
+            DisableInteractionOnly();
+            HolsterWeapon(true);
+            HideAllIcons();
+        }
+    }
+
+    private void Update()
+    {
+        if (CheatState.Alliance)
+        {
+            if (isProvoked)
+            {
+                isProvoked = false;
+                HolsterWeapon(true);
+            }
+
+            HideAllIcons();
+            return;
+        }
+
+        if (isDead)
+            return;
+
+        if (!TryResolvePlayerRefs())
+            return;
+
+        if (inVictoryState)
+            return;
+
+        TickRearSprintAwareness();
+        TickRearAwarenessLookAtPlayer();
+
+        if (reactionType == NPCReactionType.Fighter)
+        {
+            if (_defenseMode && !isProvoked && CanAutoAggroFromVision() && PlayerInFrontAndVisible())
+                StartAggression(byHit: false);
+        }
+
+        if (reactionType == NPCReactionType.Aggressive && !isProvoked)
+        {
+            if (CanAutoAggroFromVision() && PlayerInFrontAndVisible())
+                StartAggression(byHit: false);
+        }
+
+        if (isProvoked &&
+            reactionType != NPCReactionType.Fighter &&
+            reactionType != NPCReactionType.Aggressive)
+        {
+            Vector3 targetPos = GetCurrentTargetPosition();
+            float maxResetDistance = 25f;
+            float sqrDistance = (transform.position - targetPos).sqrMagnitude;
+
+            if (Time.time > reactionEndTime || sqrDistance > maxResetDistance * maxResetDistance)
+            {
+                isProvoked = false;
+
+                if (agent != null && agent.enabled && agent.isOnNavMesh)
+                    agent.isStopped = false;
+
+                if (UsesLocalColorFeedback())
+                    ApplyBodyColor(defaultColor);
+
+                HolsterWeapon(true);
+
+                if (attackCoroutine != null)
+                {
+                    StopCoroutine(attackCoroutine);
+                    attackCoroutine = null;
+                }
+
+                HideAllIcons();
+            }
+        }
+
+        if (isProvoked &&
+        reactionType == NPCReactionType.Aggressive &&
+        player != null &&
+        !isDead)
+        {
+            HandleAggressiveMemory();
+        }
+
+        HandleMoveFacing();
+
+        if (!isDead && investigatingShot)
+        {
+            FacePositionXZ(lastShotPoint);
+
+            if (Time.time > investigateShotUntil)
+            {
+                investigatingShot = false;
+            }
+            else if (agent && agent.isOnNavMesh && !agent.pathPending && agent.remainingDistance <= investigateArriveTolerance)
+            {
+                investigateShotUntil = Mathf.Min(investigateShotUntil, Time.time + 1.25f);
+            }
+        }
+    }
+
+    private bool CanAutoAggroFromVision()
+    {
+        return Time.time >= rearAwarenessSuppressAutoAggroUntil;
+    }
+
+    private void OnEnable()
+    {
+        PlayerStats.OnPlayerDied += HandlePlayerDied;
+
+        OnCowardReportedLastKnownPos += HandleCowardReported;
+
+        Gun.OnPlayerShot += OnPlayerShotHeard;
+    }
+    private void OnDisable()
+    {
+        PlayerStats.OnPlayerDied -= HandlePlayerDied;
+
+        OnCowardReportedLastKnownPos -= HandleCowardReported;
+
+        Gun.OnPlayerShot -= OnPlayerShotHeard;
+    }
+
+    public void ForceReactToAggression()
+    {
+        if (isDead || deathSequenceStarted || inVictoryState)
+            return;
+
+        StartAggression(byHit: false);
+    }
 
     public void RecomputeBaseColor()
     {
@@ -233,191 +573,6 @@ public class NPCController : MonoBehaviour, IDamageable
         RecomputeBaseColor();
     }
 
-    private void Update()
-    {
-        if (CheatState.Alliance)
-        {
-            // rozbrój agresję, zatrzymaj broń, pozwól im „żyć swoim życiem”
-            if (isProvoked) { isProvoked = false; HolsterWeapon(true); }
-            HideAllIcons();
-
-            // możesz zostawić patrol itd.
-            return;
-        }
-
-        if (isDead || player == null) return;
-        if (inVictoryState) return;
-
-
-        if (reactionType == NPCReactionType.Fighter)
-        {
-            if (_defenseMode && !isProvoked && PlayerInFrontAndVisible())
-                StartAggression(byHit: false);
-        }
-
-
-        if (reactionType == NPCReactionType.Aggressive && !isProvoked)
-        {
-            if (PlayerInFrontAndVisible())
-                StartAggression(byHit: false);
-        }
-
-        if (isProvoked &&
-            reactionType != NPCReactionType.Fighter &&
-            reactionType != NPCReactionType.Aggressive &&
-            (Time.time > reactionEndTime || Vector3.Distance(transform.position, GetCurrentTargetPosition()) > 25f))
-        {
-            isProvoked = false;
-
-            if (agent != null && agent.isOnNavMesh)
-                agent.isStopped = false;
-
-            ApplyBodyColor(defaultColor);
-            HolsterWeapon(true);
-
-            if (attackCoroutine != null)
-            {
-                StopCoroutine(attackCoroutine);
-                attackCoroutine = null;
-            }
-
-            HideAllIcons();
-        }
-
-        if (isProvoked &&
-        reactionType == NPCReactionType.Aggressive &&
-        player != null &&
-        !isDead)
-        {
-            HandleAggressiveMemory();
-        }
-
-        HandleMoveFacing();
-
-        if (!isDead && investigatingShot)
-        {
-            FacePositionXZ(lastShotPoint);
-
-            if (Time.time > investigateShotUntil)
-            {
-                investigatingShot = false;
-            }
-            else if (agent && agent.isOnNavMesh && !agent.pathPending && agent.remainingDistance <= investigateArriveTolerance)
-            {
-                // Dotarł – chwilę „czeka/rozgląda się”
-                investigateShotUntil = Mathf.Min(investigateShotUntil, Time.time + 1.25f);
-            }
-        }
-    }
-
-    private void Awake()
-    {
-        agent = GetComponent<NavMeshAgent>();
-        rootRb = GetComponent<Rigidbody>();
-        cachedAnimator = GetComponentInChildren<Animator>(true);
-        core = GetComponent<NPCCore>();
-        // bierz tylko solid collider z roota
-        var cols = GetComponents<Collider>();
-        rootCol = null;
-
-        if (weaponsListRoot == null)
-        {
-            Transform body = transform.Find("Body");
-            if (body != null)
-                weaponsListRoot = body.Find("WeaponsList");
-        }
-
-        foreach (var c in cols)
-        {
-            if (c != null && !c.isTrigger)
-            {
-                rootCol = c;
-                break;
-            }
-        }
-
-        // fallback: jeśli root nie ma sensownego collidera, weź pierwszy fizyczny z physicalColliders
-        if ((rootCol == null || rootCol.isTrigger) && physicalColliders != null)
-        {
-            for (int i = 0; i < physicalColliders.Length; i++)
-            {
-                var c = physicalColliders[i];
-                if (c != null && !c.isTrigger)
-                {
-                    rootCol = c;
-                    break;
-                }
-            }
-        }
-
-        startRotation = transform.rotation;
-
-        var p = GameObject.FindGameObjectWithTag("Player");
-        player = p ? p.transform : null;
-        playerStats = p ? p.GetComponent<PlayerStats>() : null;
-
-        RefreshBodyRenderers();
-        _mpb = new MaterialPropertyBlock();
-
-        RecomputeBaseColor();
-        currentHP = maxHP;
-
-        if (!alertSprite && alertIcon) alertSprite = alertIcon.GetComponent<SpriteRenderer>();
-        HideAllIcons();
-
-        if (scaredIcon && !scaredSpriteRenderer)
-            scaredSpriteRenderer = scaredIcon.GetComponent<SpriteRenderer>();
-        if (scaredIcon) scaredIcon.SetActive(false);
-
-        // ustaw root rigidbody poprawnie za życia
-        if (rootRb != null)
-        {
-            rootRb.isKinematic = true;
-            rootRb.useGravity = false;
-            rootRb.interpolation = RigidbodyInterpolation.Interpolate;
-            rootRb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
-        }
-    }
-
-    private void Start()
-    {
-        if (useWeaponSystem)
-            AssignRandomWeapon();
-
-        RefreshBodyRenderers();
-        ApplyBodyColor(defaultColor);
-
-        InvokeRepeating(nameof(PickNewDestination), 5f, 10f);
-
-        if (reactionType == NPCReactionType.Aggressive && fighterVariant == FighterVariant.Black)
-        {
-            DisableInteractionOnly();
-
-            // Czarny NPC jest "łowcą", ale nie pokazuje alertu i nie wyciąga broni,
-            // dopóki faktycznie nie wejdzie w walkę.
-            HolsterWeapon(true);
-            HideAllIcons();
-        }
-    }
-
-    private void OnEnable()
-    {
-        PlayerStats.OnPlayerDied += HandlePlayerDied;
-
-        OnCowardReportedLastKnownPos += HandleCowardReported;
-
-        Gun.OnPlayerShot += OnPlayerShotHeard;  // ✅
-    }
-    private void OnDisable()
-    {
-        PlayerStats.OnPlayerDied -= HandlePlayerDied;
-
-        OnCowardReportedLastKnownPos -= HandleCowardReported;
-
-        Gun.OnPlayerShot -= OnPlayerShotHeard;  // ✅
-    }
-
-    // Helper — odległość punktu od promienia (ray)
     static float DistancePointToRay(Vector3 point, Vector3 rayOrigin, Vector3 rayDirNormalized)
     {
         Vector3 toPoint = point - rayOrigin;
@@ -430,7 +585,6 @@ public class NPCController : MonoBehaviour, IDamageable
     {
         if (isDead || CheatState.Alliance) return;
 
-        // limit zasięgu reakcji (użyj bliższego z dwóch punktów zdarzenia)
         float dOrigin = Vector3.Distance(transform.position, shotOrigin);
         float dImpact = Vector3.Distance(transform.position, impactPoint);
         float dMin = Mathf.Min(dOrigin, dImpact);
@@ -442,7 +596,6 @@ public class NPCController : MonoBehaviour, IDamageable
         bool closeImpact = distToImpact <= shotHearRadius;
         if (!nearMiss && !closeImpact) return;
 
-        // LOS – użyj wysokości z pola
         Vector3 eye = transform.position + Vector3.up * shotLOSProbeHeight;
         Vector3 toCheck = (nearMiss ? (shotOrigin - eye) : (impactPoint - eye));
         var maskNoNPC = shotHearingObstaclesMask & ~LayerMask.GetMask("NPC");
@@ -450,7 +603,6 @@ public class NPCController : MonoBehaviour, IDamageable
         if (Physics.Raycast(eye, toCheck.normalized, out RaycastHit block, toCheck.magnitude,
                             maskNoNPC, QueryTriggerInteraction.Ignore))
         {
-            // jeśli trafiliśmy siebie/swoje dzieci – zignoruj
             if (!block.collider.transform.IsChildOf(transform)) return;
         }
 
@@ -463,15 +615,13 @@ public class NPCController : MonoBehaviour, IDamageable
             DisableInteractionAndCollisionForever();
             StartCowardFlee();
 
-            // zamiast alertIcon.SetActive(false);
-            ShowScared(new Color(1f, 0.85f, 0.2f)); // ciepły strach
+            ShowScared(new Color(1f, 0.85f, 0.2f)); 
             return;
         }
 
         if (!isProvoked) StartAggression(byHit: false);
         reactionEndTime = Time.time + reactionDuration;
 
-        // investigation (współpracuje z blokiem w Update)
         investigatingShot = true;
         lastShotPoint = impactPoint;
         investigateShotUntil = Time.time + investigateFromShotTime;
@@ -493,7 +643,7 @@ public class NPCController : MonoBehaviour, IDamageable
 
     private void ShowAlert(Color c)
     {
-        if (scaredIcon) scaredIcon.SetActive(false); // nigdy jednocześnie
+        if (scaredIcon) scaredIcon.SetActive(false);
         if (alertIcon)
         {
             if (alertSprite) alertSprite.color = c;
@@ -524,7 +674,7 @@ public class NPCController : MonoBehaviour, IDamageable
         if (alertSprite) alertSprite.color = c;
     }
 
-    private bool PlayerInFrontAndVisible()
+    private bool PlayerInFrontAndVisibleRaw()
     {
         if (CheatState.Alliance) return false;
 
@@ -543,21 +693,228 @@ public class NPCController : MonoBehaviour, IDamageable
         float angle = Vector3.Angle(transform.forward, flatTo.normalized);
         if (angle > viewAngle * 0.5f) return false;
 
-        // LOS – tylko przeszkody świata blokują
         if (Physics.Raycast(eye, to.normalized, out RaycastHit hit, dist, losObstaclesMask, QueryTriggerInteraction.Ignore))
             return false;
 
         return true;
     }
 
+    private void TickRearSprintAwareness()
+    {
+        if (!CanUseRearSprintAwareness())
+            return;
+
+        if (Time.time < nextRearAwarenessTime)
+            return;
+
+        Vector3 targetPos = GetCurrentTargetPosition();
+        Vector3 toPlayer = targetPos - transform.position;
+        toPlayer.y = 0f;
+
+        float radiusSqr = rearAwarenessRadius * rearAwarenessRadius;
+
+        if (toPlayer.sqrMagnitude > radiusSqr)
+            return;
+
+        if (toPlayer.sqrMagnitude < 0.001f)
+            return;
+
+        float playerSpeed = GetPlayerHorizontalSpeed();
+
+        if (playerSpeed < rearAwarenessMinSpeed)
+            return;
+
+        float angle = Vector3.Angle(transform.forward, toPlayer.normalized);
+
+        if (angle < rearAwarenessMinBackAngle)
+            return;
+
+        if (rearAwarenessRequiresLineOfSight && IsRearAwarenessBlocked(targetPos))
+            return;
+
+        nextRearAwarenessTime = Time.time + rearAwarenessCooldown;
+
+        BeginRearAwarenessLook(targetPos);
+
+        if (debugLogs)
+        {
+            Debug.Log(
+                $"[NPC] Rear awareness look -> {name}, " +
+                $"speed={playerSpeed:0.00}, angle={angle:0.0}, dist={Mathf.Sqrt(toPlayer.sqrMagnitude):0.00}"
+            );
+        }
+    }
+
+    private void TickRearAwarenessLookAtPlayer()
+    {
+        if (Time.time >= rearAwarenessLookUntil)
+        {
+            ReleaseRearAwarenessStopIfNeeded();
+            return;
+        }
+
+        if (isDead || deathSequenceStarted || inVictoryState)
+        {
+            ReleaseRearAwarenessStopIfNeeded();
+            return;
+        }
+
+        if (isProvoked || isFleeing)
+        {
+            ReleaseRearAwarenessStopIfNeeded();
+            return;
+        }
+
+        if (agent != null && agent.enabled && agent.isOnNavMesh)
+            agent.isStopped = true;
+
+        Vector3 targetPos = player != null
+            ? GetCurrentTargetPosition()
+            : rearAwarenessLookTarget;
+
+        rearAwarenessLookTarget = targetPos;
+        FacePositionXZ(targetPos);
+    }
+
+
+    private bool CanUseRearSprintAwareness()
+    {
+        if (!useRearSprintAwareness)
+            return false;
+
+        if (isDead || deathSequenceStarted || inVictoryState)
+            return false;
+
+        if (player == null)
+            return false;
+
+        if (core != null)
+        {
+            if (core.Importance != NPCCore.NPCImportance.Ambient)
+                return false;
+
+            if (core.IsInvulnerable || core.PreventDeath)
+                return false;
+        }
+
+        if (reactionType == NPCReactionType.Coward && (isFleeing || IsScaredVisible))
+            return false;
+
+        if (rearAwarenessRequiresHeldWeapon && !PlayerHasWeaponInHands())
+            return false;
+
+        return true;
+    }
+
+    private float GetPlayerHorizontalSpeed()
+    {
+        if (player == null)
+            return 0f;
+
+        if (playerMovement == null ||
+            playerCharacterController == null ||
+            playerRigidbody == null)
+        {
+            CachePlayerMotionRefs();
+        }
+
+        if (playerMovement != null && playerMovement.IsTryingToSprint)
+        {
+            return Mathf.Max(rearAwarenessMinSpeed + 0.5f, 5f);
+        }
+
+        Vector3 velocity = Vector3.zero;
+
+        if (playerCharacterController != null)
+        {
+            velocity = playerCharacterController.velocity;
+        }
+        else if (playerRigidbody != null)
+        {
+            velocity = playerRigidbody.linearVelocity;
+        }
+        else
+        {
+            Vector3 currentPos = player.position;
+
+            if (!rearAwarenessPlayerPosInitialized)
+            {
+                rearAwarenessPlayerPosInitialized = true;
+                lastRearAwarenessPlayerPos = currentPos;
+                return 0f;
+            }
+
+            velocity = (currentPos - lastRearAwarenessPlayerPos) / Mathf.Max(Time.deltaTime, 0.0001f);
+            lastRearAwarenessPlayerPos = currentPos;
+        }
+
+        velocity.y = 0f;
+        return velocity.magnitude;
+    }
+
+    private bool IsRearAwarenessBlocked(Vector3 targetPos)
+    {
+        if (player == null)
+            return false;
+
+        Vector3 eye = transform.position + Vector3.up * 1.4f;
+        Vector3 target = targetPos + Vector3.up * 1.2f;
+        Vector3 toTarget = target - eye;
+
+        float distance = toTarget.magnitude;
+
+        if (distance <= 0.001f)
+            return false;
+
+        int playerLayer = LayerMask.NameToLayer("Player");
+        int npcLayer = LayerMask.NameToLayer("NPC");
+
+        LayerMask mask = rearAwarenessObstacleMask;
+
+        if (playerLayer >= 0)
+            mask &= ~(1 << playerLayer);
+
+        if (npcLayer >= 0)
+            mask &= ~(1 << npcLayer);
+
+        if (Physics.Raycast(
+                eye,
+                toTarget.normalized,
+                out RaycastHit hit,
+                distance,
+                mask,
+                QueryTriggerInteraction.Ignore))
+        {
+            if (hit.collider.transform.IsChildOf(transform))
+                return false;
+
+            if (hit.collider.transform.IsChildOf(player))
+                return false;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool PlayerInFrontAndVisible()
+    {
+        if (Time.time < nextVisionCheckTime)
+            return cachedPlayerInFrontAndVisible;
+
+        nextVisionCheckTime = Time.time + visionRefreshInterval;
+        cachedPlayerInFrontAndVisible = PlayerInFrontAndVisibleRaw();
+
+        return cachedPlayerInFrontAndVisible;
+    }
 
     // ===== KOLOR / FLASH =====
     private Color ChooseBaseColor()
     {
         switch (reactionType)
         {
-            case NPCReactionType.Fighter: return Color.blue;   // Fighter = niebieski
-            case NPCReactionType.Aggressive: return Color.black;  // Aggressive = czarny
+            case NPCReactionType.Fighter: return Color.blue;   // Fighter
+            case NPCReactionType.Aggressive: return Color.black;  // Aggressive
             case NPCReactionType.Coward: return GetRandomCowardColor();
             default: return Color.gray;
         }
@@ -577,27 +934,29 @@ public class NPCController : MonoBehaviour, IDamageable
 
     private void ApplyBodyColor(Color c)
     {
-        if (_mpb == null) _mpb = new MaterialPropertyBlock();
-        if (bodyRenderers == null || bodyRenderers.Length == 0) return;
+        if (_mpb == null)
+            _mpb = new MaterialPropertyBlock();
 
-        foreach (var r in bodyRenderers)
+        if (bodyRenderers == null || bodyRenderers.Length == 0)
+            return;
+
+        for (int i = 0; i < bodyRenderers.Length; i++)
         {
-            if (!r) continue;
+            Renderer r = bodyRenderers[i];
+
+            if (r == null)
+                continue;
 
             r.GetPropertyBlock(_mpb);
             _mpb.SetColor(BaseColorID, c);
             _mpb.SetColor(ColorID, c);
             r.SetPropertyBlock(_mpb);
-
-            // Fallback – gdy shader ignoruje MPB/properties
-            var mat = Application.isPlaying ? r.material : r.sharedMaterial;
-            if (mat != null)
-            {
-                if (mat.HasProperty(BaseColorID)) mat.SetColor(BaseColorID, c);
-                else if (mat.HasProperty(ColorID)) mat.SetColor(ColorID, c);
-                else mat.color = c; // absolutny fallback
-            }
         }
+    }
+
+    private bool UsesLocalColorFeedback()
+    {
+        return core == null;
     }
 
     private void DisableInteractionOnly()
@@ -610,19 +969,31 @@ public class NPCController : MonoBehaviour, IDamageable
 
     private IEnumerator FlashRedCoroutine(float duration)
     {
-        if (isDead) yield break;
+        if (isDead || !UsesLocalColorFeedback())
+            yield break;
 
         ApplyBodyColor(Color.red);
 
         yield return new WaitForSeconds(duration);
 
         if (!isDead)
-        {
             ApplyBodyColor(defaultColor);
-        }
+
+        flashCoroutine = null;
     }
 
-    // ===== PATROL / RUCH =====
+    private void RestartLocalHitFlash()
+    {
+        if (!UsesLocalColorFeedback())
+            return;
+
+        if (flashCoroutine != null)
+            StopCoroutine(flashCoroutine);
+
+        flashCoroutine = StartCoroutine(FlashRedCoroutine(hitFlashDuration));
+    }
+
+    // ===== PATROL / MOVE =====
     private void PickNewDestination()
     {
         if (isDead) return;
@@ -636,7 +1007,11 @@ public class NPCController : MonoBehaviour, IDamageable
 
     private void HandleMoveFacing()
     {
-        if (isProvoked || inVictoryState || agent == null || !agent.enabled || !agent.hasPath) return;
+        if (Time.time < rearAwarenessLookUntil)
+            return;
+
+        if (isProvoked || inVictoryState || agent == null || !agent.enabled || !agent.hasPath)
+            return;
 
         Vector3 dir = agent.desiredVelocity; dir.y = 0f;
         if (dir.sqrMagnitude > 0.01f)
@@ -654,298 +1029,532 @@ public class NPCController : MonoBehaviour, IDamageable
         transform.rotation = Quaternion.RotateTowards(transform.rotation, rot, Time.deltaTime * 720f);
     }
 
-    // ===== AGGRESJA / ATAK =====
+    // ===== AGGRO / ATTACK =====
     private void StartAggression(bool byHit)
     {
-        isProvoked = true;
+        if (isDead || deathSequenceStarted || inVictoryState)
+            return;
 
-        lastSeenPlayerPosition = GetCurrentTargetPosition();
+        ClearRearAwarenessHold();
+
+        if (!TryResolvePlayerRefs())
+            return;
+
+        Vector3 targetPos = GetCurrentTargetPosition();
+
+        lastSeenPlayerPosition = targetPos;
         lastSeenPlayerTime = Time.time;
         searchingLastSeenPosition = false;
+        reactionEndTime = Time.time + reactionDuration;
 
+        ResetCombatDestinationCache();
         DisableInteractionOnly();
         ShowAlert(Color.red);
 
-        if (!_playerPosInitialized && player != null)
+        if (!_playerPosInitialized)
         {
-            _lastPlayerPos = GetCurrentTargetPosition();
+            _lastPlayerPos = targetPos;
             _playerPosInitialized = true;
         }
 
-        reactionEndTime = Time.time + reactionDuration;
+        if (isProvoked && attackCoroutine != null)
+            return;
 
-        if (attackCoroutine != null) StopCoroutine(attackCoroutine);
+        isProvoked = true;
+
+        if (attackCoroutine != null)
+            StopCoroutine(attackCoroutine);
+
         attackCoroutine = StartCoroutine(AttackSequence(byHit));
+    }
+
+    // =========================================================
+    // ATTACK SEQUENCE
+    // =========================================================
+
+    private struct CombatFrame
+    {
+        public Vector3 targetPos;
+        public float horizontalDistance;
+        public bool verticalTooBig;
+        public bool foundGroundUnderPlayer;
+        public Vector3 groundUnderPlayer;
+        public bool shouldCamp;
+        public float shootDistance;
     }
 
     private IEnumerator AttackSequence(bool byHit)
     {
-        if (player == null) yield break;
+        if (!CanContinueCombat())
+            yield break;
 
-        if (agent != null && agent.enabled && agent.isOnNavMesh)
-        {
-            agent.isStopped = false;
-            if (agent.pathPending && agent.remainingDistance > 2f)
-                FacePositionXZ(GetCurrentTargetPosition());
+        PrepareCombatAgent();
 
-            agent.speed = 6.5f * GetWeaponSpeedMulForNPC();
-            agent.speed = Mathf.Max(agent.speed, maxApproachSpeedWhenCamping * GetWeaponSpeedMulForNPC());
+        yield return FaceTargetBeforeDraw();
 
-            agent.acceleration = 14f;
-        }
-
-        // 1) Obrót na gracza (wstępny)
-        // 1) Obrót na gracza (wstępny)
-        float t = 0f, faceMax = 0.6f;
-        while (!isDead && player != null)
-        {
-            Vector3 targetPos = GetCurrentTargetPosition();
-            Vector3 to = targetPos - transform.position;
-            to.y = 0f;
-
-            float ang = Vector3.Angle(transform.forward, to);
-            if (ang <= faceAngleThreshold) break;
-
-            FacePositionXZ(GetCurrentTargetPosition());
-            if (agent != null && agent.enabled && agent.isOnNavMesh) agent.isStopped = true;
-            t += Time.deltaTime;
-            if (t >= faceMax) break;
-            yield return null;
-        }
-
-        // 2) Wyjmij broń
         HolsterWeapon(false);
-        if (weaponDrawTime > 0f) yield return new WaitForSeconds(weaponDrawTime);
 
-        // 3) Krótki aim
+        if (weaponDrawTime > 0f)
+            yield return new WaitForSeconds(weaponDrawTime);
+
         if (aimDelay > 0f)
+            yield return AimBeforeCombat();
+
+        float shootDistance = GetShootDistance();
+
+        while (CanContinueCombat())
         {
-            float a = 0f;
-            while (a < aimDelay && !isDead)
+            CombatFrame frame = BuildCombatFrame(shootDistance);
+
+            if (TryHandleCombatMovement(frame))
             {
-                FacePositionXZ(GetCurrentTargetPosition());
-                a += Time.deltaTime;
                 yield return null;
+                continue;
             }
+
+            yield return SnapAimBeforeShooting();
+
+            if (CanFireAtTarget(frame))
+                yield return FireBurst(shootDistance);
+
+            yield return CombatCooldown();
         }
 
-        // 4) Docelowy dystans
-        float shootDist = Mathf.Clamp(
-            desiredShootingDistance > 0f ? desiredShootingDistance : (engageDistance * 0.85f),
-            minShootingDistance + 0.5f,
-            Mathf.Max(minShootingDistance + 1f, engageDistance)
-        );
-
-        // ——— lokals: przewidzenie punktu celowania + kierunek z lufy ———
-        (Vector3 aimPos, Vector3 dir) PredictAim()
-        {
-            Vector3 curPos = GetCurrentTargetPosition();
-            Vector3 playerVel = _playerPosInitialized
-                ? (curPos - _lastPlayerPos) / Mathf.Max(Time.deltaTime, 0.0001f)
-                : Vector3.zero;
-
-            _lastPlayerPos = curPos;
-            _playerPosInitialized = true;
-
-            Vector3 muzzle = (equippedGun != null && equippedGun.FirePoint != null)
-                ? equippedGun.FirePoint.position
-                : transform.position + Vector3.up * 1.4f;
-
-            float bulletSpeed = equippedGun != null
-                ? Mathf.Max(1f, equippedGun.BulletSpeed)
-                : 60f;
-
-            Vector3 toTarget = (curPos + Vector3.up * 1.4f) - muzzle;
-            float timeToHit = Mathf.Max(0.0f, toTarget.magnitude / Mathf.Max(1f, bulletSpeed));
-
-            Vector3 aimNow = curPos + playerVel * timeToHit + Vector3.up * 1.4f;
-            Vector3 d = (aimNow - muzzle).normalized;
-            return (aimNow, d);
-        }
-
-        while (isProvoked && !isDead && player != null && playerStats != null && !playerStats.IsDead)
-        {
-            // ——— stan pionowy ———
-            bool verticalTooBig = VerticalGapTooLarge();
-            float horizDist = HorizontalDistance(transform.position, GetCurrentTargetPosition());
-
-            // Czy powinniśmy „czaić się” pod graczem?
-            bool foundUnder;
-            Vector3 under = GetGroundPointUnderPlayer(searchRadius: 6f, out foundUnder);
-            bool shouldCamp = foundUnder && (verticalTooBig || (agent != null && agent.isOnNavMesh && agent.pathStatus == NavMeshPathStatus.PathPartial));
-
-            if (agent != null && agent.enabled && agent.isOnNavMesh)
-            {
-                agent.acceleration = 14f;
-
-                if (shouldCamp)
-                {
-                    // ——— TRYB „CZAJENIA SIĘ POD GRACZEM” ———
-                    agent.isStopped = false;
-                    agent.speed = Mathf.Max(agent.speed, maxApproachSpeedWhenCamping * GetWeaponSpeedMulForNPC());
-
-                    // Ustaw cel na pierścieniu wokół XZ gracza, trzymaj horyzontalny dystans (shootDist)
-                    bool onMesh;
-                    Vector3 ring = RingPointAroundXZ(under, Mathf.Min(shootDist, campUnderPlayerRadius + shootDist * 0.2f),
-                                                     preferAwayFrom: transform.position, out onMesh);
-                    if (onMesh)
-                    {
-                        // repath co jakiś czas – unikaj spamowania SetDestination
-                        if (Time.time >= _nextRepath)
-                        {
-                            _nextRepath = Time.time + campRepathInterval;
-                            agent.SetDestination(ring);
-                        }
-                    }
-                    else
-                    {
-                        // fallback – idź bliżej XZ gracza
-                        if (Time.time >= _nextRepath)
-                        {
-                            _nextRepath = Time.time + campRepathInterval;
-                            agent.SetDestination(under);
-                        }
-                    }
-
-                    // Obracaj się w kierunku przewidzianego punktu celowania (użyj istniejącej PredictAim)
-                    var predCamp = PredictAim();
-                    FacePositionXZ(predCamp.aimPos);
-                }
-                else
-                {
-                    // ——— KLASYKA: podejdź/odsuń się po HORYZONTALNYM dystansie ———
-                    if (horizDist > shootDist)
-                    {
-                        agent.isStopped = false;
-                        agent.speed = 6.5f * GetWeaponSpeedMulForNPC();
-                        agent.speed = Mathf.Max(agent.speed, maxApproachSpeedWhenCamping * GetWeaponSpeedMulForNPC());
-
-                        var pred = PredictAim();
-                        FacePositionXZ(pred.aimPos);
-                        agent.SetDestination(GetCurrentTargetPosition()); // idź bliżej
-                        yield return null;
-                        continue;
-                    }
-
-                    if (horizDist < (minShootingDistance + retreatBuffer))
-                    {
-                        Vector3 back = (transform.position - GetCurrentTargetPosition());
-                        back.y = 0f;
-                        if (back.sqrMagnitude > 0.0001f)
-                        {
-                            back = back.normalized;
-                            agent.isStopped = false;
-                            Vector3 target = transform.position + back * ((minShootingDistance + retreatBuffer) - horizDist + 0.5f);
-                            agent.SetDestination(target);
-                        }
-                        var pred = PredictAim();
-                        FacePositionXZ(pred.aimPos);
-                        yield return null;
-                        continue;
-                    }
-
-                    // w dystansie → zatrzymaj się i strzel
-                    agent.isStopped = true;
-                    agent.ResetPath();
-                }
-            }
-
-            // Szybki „snap” obrotu na przewidziane miejsce
-            {
-                float snap = 0f, snapMax = 0.25f;
-                while (snap < snapMax && !isDead)
-                {
-                    var pred = PredictAim();
-                    FacePositionXZ(pred.aimPos);
-                    snap += Time.deltaTime;
-                    yield return null;
-                }
-            }
-
-            // ——— STRZAŁY: strzelamy tylko gdy różnica wysokości nie jest przesadna LUB mamy czysty LOS pod kątem ———
-            bool allowFire = !verticalTooBig;
-            if (!allowFire)
-            {
-                // spróbuj mimo różnicy: jeśli ray z lufy do celu nie trafia w świat – pozwól
-                Vector3 muzzle = (equippedGun != null && equippedGun.FirePoint != null)
-                    ? equippedGun.FirePoint.position
-                    : transform.position + Vector3.up * 1.4f;
-
-                Vector3 toTarget = (GetCurrentTargetPosition() + Vector3.up * 1.4f) - muzzle;
-                float dist = toTarget.magnitude;
-
-                if (!Physics.Raycast(muzzle, toTarget.normalized, dist, losObstaclesMask, QueryTriggerInteraction.Ignore))
-                    allowFire = true;
-            }
-
-            if (equippedGun != null && allowFire)
-            {
-                if (equippedGun == null)
-                {
-                    Debug.LogWarning($"[NPC] {name}: Cannot fire, equippedGun is NULL.");
-                }
-                else if (!allowFire)
-                {
-                    Debug.Log($"[NPC] {name}: Cannot fire, allowFire=false. Vertical/LOS issue.");
-                }
-
-                else
-                {
-                    for (int i = 0; i < shotsPerBurst; i++)
-                    {
-                        if (!isProvoked || isDead || player == null || playerStats == null || playerStats.IsDead)
-                            break;
-
-                        float dNow = HorizontalDistance(transform.position, GetCurrentTargetPosition());
-
-                        if (dNow > shootDist + 0.75f || dNow < (minShootingDistance + retreatBuffer))
-                            break;
-
-                        var pred = PredictAim();
-                        FacePositionXZ(pred.aimPos);
-
-                        equippedGun.TryFire(gameObject, pred.dir);
-
-                        float wait = Mathf.Max(0.05f, equippedGun.FireRate);
-                        float tWait = 0f;
-
-                        while (tWait < wait)
-                        {
-                            if (!isProvoked || isDead || player == null || playerStats == null || playerStats.IsDead)
-                                break;
-
-                            var pred2 = PredictAim();
-                            FacePositionXZ(pred2.aimPos);
-
-                            tWait += Time.deltaTime;
-                            yield return null;
-                        }
-                    }
-                }
-            }
-
-            // cooldown między seriami – normalnie
-            {
-                float tCool = 0f;
-                while (tCool < fireCooldown)
-                {
-                    if (!isProvoked || isDead || player == null || playerStats == null || playerStats.IsDead) break;
-                    var pred = PredictAim();
-                    FacePositionXZ(pred.aimPos);
-                    tCool += Time.deltaTime;
-                    yield return null;
-                }
-            }
-        }
-
-        // koniec sekwencji (utrata celu/uspokojenie)
         HolsterWeapon(true);
         attackCoroutine = null;
     }
 
 
+    private bool CanContinueCombat()
+    {
+        return isProvoked &&
+               !isDead &&
+               player != null &&
+               playerStats != null &&
+               !playerStats.IsDead;
+    }
 
-    // ===== ŚMIERĆ GRACZA =====
+    private void PrepareCombatAgent()
+    {
+        if (agent == null || !agent.enabled || !agent.isOnNavMesh)
+            return;
+
+        agent.isStopped = false;
+
+        if (agent.pathPending && agent.remainingDistance > 2f)
+            FacePositionXZ(GetCurrentTargetPosition());
+
+        float speedMul = GetWeaponSpeedMulForNPC();
+
+        agent.speed = 6.5f * speedMul;
+        agent.speed = Mathf.Max(agent.speed, maxApproachSpeedWhenCamping * speedMul);
+        agent.acceleration = 14f;
+    }
+
+    private IEnumerator FaceTargetBeforeDraw()
+    {
+        float timer = 0f;
+        float maxTime = 0.6f;
+
+        while (!isDead && player != null)
+        {
+            Vector3 targetPos = GetCurrentTargetPosition();
+            Vector3 toTarget = targetPos - transform.position;
+            toTarget.y = 0f;
+
+            if (toTarget.sqrMagnitude <= 0.001f)
+                yield break;
+
+            float angle = Vector3.Angle(transform.forward, toTarget.normalized);
+
+            if (angle <= faceAngleThreshold)
+                yield break;
+
+            FacePositionXZ(targetPos);
+
+            if (agent != null && agent.enabled && agent.isOnNavMesh)
+                agent.isStopped = true;
+
+            timer += Time.deltaTime;
+
+            if (timer >= maxTime)
+                yield break;
+
+            yield return null;
+        }
+    }
+
+    private IEnumerator AimBeforeCombat()
+    {
+        float timer = 0f;
+
+        while (timer < aimDelay && !isDead && player != null)
+        {
+            FacePositionXZ(GetCurrentTargetPosition());
+
+            timer += Time.deltaTime;
+            yield return null;
+        }
+    }
+
+    private float GetShootDistance()
+    {
+        float wantedDistance = desiredShootingDistance > 0f
+            ? desiredShootingDistance
+            : engageDistance * 0.85f;
+
+        return Mathf.Clamp(
+            wantedDistance,
+            minShootingDistance + 0.5f,
+            Mathf.Max(minShootingDistance + 1f, engageDistance)
+        );
+    }
+
+    private void PredictAim(out Vector3 aimPos, out Vector3 aimDir)
+    {
+        Vector3 currentTargetPos = GetCurrentTargetPosition();
+
+        Vector3 playerVelocity = _playerPosInitialized
+            ? (currentTargetPos - _lastPlayerPos) / Mathf.Max(Time.deltaTime, 0.0001f)
+            : Vector3.zero;
+
+        _lastPlayerPos = currentTargetPos;
+        _playerPosInitialized = true;
+
+        Vector3 muzzle = equippedGun != null && equippedGun.FirePoint != null
+            ? equippedGun.FirePoint.position
+            : transform.position + Vector3.up * 1.4f;
+
+        float bulletSpeed = equippedGun != null
+            ? Mathf.Max(1f, equippedGun.BulletSpeed)
+            : 60f;
+
+        Vector3 targetCenter = currentTargetPos + Vector3.up * 1.4f;
+        Vector3 toTarget = targetCenter - muzzle;
+
+        float timeToHit = Mathf.Max(0f, toTarget.magnitude / bulletSpeed);
+
+        aimPos = currentTargetPos + playerVelocity * timeToHit + Vector3.up * 1.4f;
+        aimDir = (aimPos - muzzle).normalized;
+    }
+
+    private CombatFrame BuildCombatFrame(float shootDistance)
+    {
+        Vector3 targetPos = GetCurrentTargetPosition();
+
+        bool foundUnder;
+        Vector3 under = GetGroundPointUnderPlayer(6f, out foundUnder);
+
+        bool verticalTooBig = VerticalGapTooLarge();
+
+        bool pathPartial =
+            agent != null &&
+            agent.enabled &&
+            agent.isOnNavMesh &&
+            agent.pathStatus == NavMeshPathStatus.PathPartial;
+
+        return new CombatFrame
+        {
+            targetPos = targetPos,
+            horizontalDistance = HorizontalDistance(transform.position, targetPos),
+            verticalTooBig = verticalTooBig,
+            foundGroundUnderPlayer = foundUnder,
+            groundUnderPlayer = under,
+            shouldCamp = foundUnder && (verticalTooBig || pathPartial),
+            shootDistance = shootDistance
+        };
+    }
+
+    private bool TryHandleCombatMovement(CombatFrame frame)
+    {
+        if (agent == null || !agent.enabled || !agent.isOnNavMesh)
+            return false;
+
+        agent.acceleration = 14f;
+
+        if (frame.shouldCamp)
+            return HandleCampUnderPlayer(frame);
+
+        if (frame.horizontalDistance > frame.shootDistance)
+            return HandleChaseTarget(frame);
+
+        if (frame.horizontalDistance < minShootingDistance + retreatBuffer)
+            return HandleRetreatFromTarget(frame);
+
+        StopForShooting();
+        return false;
+    }
+
+    private bool HandleCampUnderPlayer(CombatFrame frame)
+    {
+        agent.isStopped = false;
+
+        float speedMul = GetWeaponSpeedMulForNPC();
+        agent.speed = Mathf.Max(agent.speed, maxApproachSpeedWhenCamping * speedMul);
+
+        bool onMesh;
+        Vector3 ring = RingPointAroundXZ(
+            frame.groundUnderPlayer,
+            Mathf.Min(frame.shootDistance, campUnderPlayerRadius + frame.shootDistance * 0.2f),
+            preferAwayFrom: transform.position,
+            out onMesh
+        );
+
+        Vector3 destination = onMesh ? ring : frame.groundUnderPlayer;
+
+        if (Time.time >= _nextRepath)
+        {
+            _nextRepath = Time.time + campRepathInterval;
+            agent.SetDestination(destination);
+        }
+
+        PredictAim(out Vector3 aimPos, out _);
+        FacePositionXZ(aimPos);
+
+        return true;
+    }
+
+    private bool HandleChaseTarget(CombatFrame frame)
+    {
+        agent.isStopped = false;
+
+        float speedMul = GetWeaponSpeedMulForNPC();
+        agent.speed = 6.5f * speedMul;
+        agent.speed = Mathf.Max(agent.speed, maxApproachSpeedWhenCamping * speedMul);
+
+        PredictAim(out Vector3 aimPos, out _);
+        FacePositionXZ(aimPos);
+
+        TrySetCombatDestination(frame.targetPos, chaseRepathInterval);
+
+        return true;
+    }
+
+    private bool HandleRetreatFromTarget(CombatFrame frame)
+    {
+        Vector3 back = transform.position - frame.targetPos;
+        back.y = 0f;
+
+        if (back.sqrMagnitude <= 0.0001f)
+            return false;
+
+        back.Normalize();
+
+        agent.isStopped = false;
+
+        float retreatDistance =
+            minShootingDistance + retreatBuffer - frame.horizontalDistance + 0.5f;
+
+        Vector3 retreatTarget = transform.position + back * retreatDistance;
+
+        if (NavMesh.SamplePosition(retreatTarget, out NavMeshHit hit, 2.0f, NavMesh.AllAreas))
+            retreatTarget = hit.position;
+
+        TrySetCombatDestination(retreatTarget, retreatRepathInterval);
+
+        PredictAim(out Vector3 aimPos, out _);
+        FacePositionXZ(aimPos);
+
+        return true;
+    }
+
+    private void StopForShooting()
+    {
+        if (agent == null || !agent.enabled || !agent.isOnNavMesh)
+            return;
+
+        agent.isStopped = true;
+
+        if (agent.hasPath)
+            agent.ResetPath();
+
+        ResetCombatDestinationCache();
+    }
+
+    private IEnumerator SnapAimBeforeShooting()
+    {
+        float timer = 0f;
+        float maxTime = 0.25f;
+
+        while (timer < maxTime && !isDead)
+        {
+            PredictAim(out Vector3 aimPos, out _);
+            FacePositionXZ(aimPos);
+
+            timer += Time.deltaTime;
+            yield return null;
+        }
+    }
+
+    private bool CanFireAtTarget(CombatFrame frame)
+    {
+        if (equippedGun == null)
+            return false;
+
+        Vector3 muzzle = equippedGun.FirePoint != null
+            ? equippedGun.FirePoint.position
+            : transform.position + Vector3.up * 1.4f;
+
+        Vector3 target = frame.targetPos + Vector3.up * 1.4f;
+        Vector3 toTarget = target - muzzle;
+
+        float distance = toTarget.magnitude;
+
+        if (distance <= 0.001f)
+            return false;
+
+        if (HasSameTypeFriendlyInFireLine(muzzle, target))
+            return false;
+
+        if (!frame.verticalTooBig)
+            return true;
+
+        return !Physics.Raycast(
+            muzzle,
+            toTarget.normalized,
+            distance,
+            losObstaclesMask,
+            QueryTriggerInteraction.Ignore
+        );
+    }
+
+    private bool IsSameCombatTypeNPC(NPCController other)
+    {
+        if (other == null || other == this || other.IsDead)
+            return false;
+
+        NPCReactionType otherType = other.GetReactionType();
+
+        if (otherType != reactionType)
+            return false;
+
+        return reactionType == NPCReactionType.Aggressive ||
+               reactionType == NPCReactionType.Fighter;
+    }
+
+    private bool HasSameTypeFriendlyInFireLine(Vector3 muzzle, Vector3 target)
+    {
+        if (!avoidSameTypeFriendlyFire)
+            return false;
+
+        Vector3 toTarget = target - muzzle;
+        float distance = toTarget.magnitude;
+
+        if (distance <= 0.001f)
+            return false;
+
+        Vector3 direction = toTarget / distance;
+
+        int npcLayer = LayerMask.NameToLayer("NPC");
+
+        LayerMask mask = losObstaclesMask;
+
+        if (npcLayer >= 0)
+            mask |= 1 << npcLayer;
+
+        int hitCount = Physics.SphereCastNonAlloc(
+            muzzle,
+            friendlyFireProbeRadius,
+            direction,
+            FriendlyFireHits,
+            distance,
+            mask,
+            QueryTriggerInteraction.Ignore
+        );
+
+        float closestFriendlyDistance = float.MaxValue;
+        NPCController closestFriendly = null;
+
+        for (int i = 0; i < hitCount; i++)
+        {
+            RaycastHit hit = FriendlyFireHits[i];
+            FriendlyFireHits[i] = default;
+
+            if (hit.collider == null)
+                continue;
+
+            if (hit.collider.transform.IsChildOf(transform))
+                continue;
+
+            NPCController otherNpc = hit.collider.GetComponentInParent<NPCController>();
+
+            if (!IsSameCombatTypeNPC(otherNpc))
+                continue;
+
+            if (hit.distance < closestFriendlyDistance)
+            {
+                closestFriendlyDistance = hit.distance;
+                closestFriendly = otherNpc;
+            }
+        }
+
+        if (closestFriendly == null)
+            return false;
+
+        if (debugLogs)
+            Debug.Log($"[NPC] Hold fire, same type friendly in line: {name} -> {closestFriendly.name}");
+
+        return true;
+    }
+
+    private IEnumerator FireBurst(float shootDistance)
+    {
+        if (equippedGun == null)
+            yield break;
+
+        for (int i = 0; i < shotsPerBurst; i++)
+        {
+            if (!CanContinueCombat())
+                yield break;
+
+            float distanceNow = HorizontalDistance(transform.position, GetCurrentTargetPosition());
+
+            if (distanceNow > shootDistance + 0.75f)
+                yield break;
+
+            if (distanceNow < minShootingDistance + retreatBuffer)
+                yield break;
+
+            PredictAim(out Vector3 aimPos, out Vector3 aimDir);
+            FacePositionXZ(aimPos);
+
+            equippedGun.TryFire(gameObject, aimDir);
+
+            float wait = Mathf.Max(0.05f, equippedGun.FireRate);
+            float timer = 0f;
+
+            while (timer < wait)
+            {
+                if (!CanContinueCombat())
+                    yield break;
+
+                PredictAim(out Vector3 waitAimPos, out _);
+                FacePositionXZ(waitAimPos);
+
+                timer += Time.deltaTime;
+                yield return null;
+            }
+        }
+    }
+
+    private IEnumerator CombatCooldown()
+    {
+        float timer = 0f;
+
+        while (timer < fireCooldown)
+        {
+            if (!CanContinueCombat())
+                yield break;
+
+            PredictAim(out Vector3 aimPos, out _);
+            FacePositionXZ(aimPos);
+
+            timer += Time.deltaTime;
+            yield return null;
+        }
+    }
+
+    // ===== PLAYER DEATH =====
     private void HandlePlayerDied(string killer)
     {
         if (isDead) return;
@@ -966,7 +1575,10 @@ public class NPCController : MonoBehaviour, IDamageable
         else
         {
             inVictoryState = false;
-            ApplyBodyColor(defaultColor);
+
+            if (UsesLocalColorFeedback())
+                ApplyBodyColor(defaultColor);
+
             HolsterWeapon(true);
 
             if (agent != null && agent.enabled && agent.isOnNavMesh)
@@ -980,22 +1592,19 @@ public class NPCController : MonoBehaviour, IDamageable
         }
     }
 
-    // Czy gracz jest istotnie wyżej/niżej od NPC?
     private bool VerticalGapTooLarge()
     {
         if (player == null) return false;
         return Mathf.Abs(GetCurrentTargetPosition().y - transform.position.y) > verticalAimTolerance;
     }
 
-    // Znajdź punkt navmesh „pod” graczem (XZ gracza, Y z NavMesh).
-    // Zwraca found=false, jeśli nie znaleziono blisko – wtedy używaj obecnej logiki.
     private Vector3 GetGroundPointUnderPlayer(float searchRadius, out bool found)
     {
         found = false;
         if (player == null) return transform.position;
 
         Vector3 xz = new Vector3(GetCurrentTargetPosition().x, GetCurrentTargetPosition().y, GetCurrentTargetPosition().z);
-        // przycięcie Y – próbujemy znaleźć dowolny punkt na NavMesh wokół XZ gracza
+
         if (NavMesh.SamplePosition(xz, out NavMeshHit hit, searchRadius, NavMesh.AllAreas))
         {
             found = true;
@@ -1004,31 +1613,28 @@ public class NPCController : MonoBehaviour, IDamageable
         return transform.position;
     }
 
-    // Policz dystans HORYZONTALNY (ignorujemy Y).
     private static float HorizontalDistance(Vector3 a, Vector3 b)
     {
         a.y = 0f; b.y = 0f;
         return Vector3.Distance(a, b);
     }
 
-    // Wygeneruj punkt na „pierścieniu” wokół targetXZ (tylko XZ; Y z NavMesh).
     private Vector3 RingPointAroundXZ(Vector3 targetXZ, float radius, Vector3 preferAwayFrom, out bool onMesh)
     {
         onMesh = false;
         Vector3 dir = (preferAwayFrom - targetXZ);
         dir.y = 0f;
-        if (dir.sqrMagnitude < 0.0001f) dir = Random.insideUnitSphere; // dowolny kierunek
+        if (dir.sqrMagnitude < 0.0001f) dir = Random.insideUnitSphere; 
         dir.y = 0f;
         dir.Normalize();
 
-        Vector3 candidate = targetXZ + (-dir) * Mathf.Max(0.1f, radius); // stań „przed” graczem (od jego XZ)
+        Vector3 candidate = targetXZ + (-dir) * Mathf.Max(0.1f, radius); 
         if (NavMesh.SamplePosition(candidate, out NavMeshHit nh, 2.5f, NavMesh.AllAreas))
         {
             onMesh = true;
             return nh.position;
         }
 
-        // fallback: kilka losowych prób po okręgu
         const int tries = 8;
         for (int i = 0; i < tries; i++)
         {
@@ -1069,7 +1675,10 @@ public class NPCController : MonoBehaviour, IDamageable
         yield return new WaitForSeconds(2f);
 
         inVictoryState = false;
-        ApplyBodyColor(defaultColor);
+
+        if (UsesLocalColorFeedback())
+            ApplyBodyColor(defaultColor);
+
         HolsterWeapon(true);
 
         if (agent != null && agent.enabled)
@@ -1081,8 +1690,6 @@ public class NPCController : MonoBehaviour, IDamageable
             PickNewDestination();
         }
     }
-
-    // NPCController.cs  (DODAJ w klasie)
     private float GetWeaponSpeedMulForNPC()
     {
         if (equippedGun == null || equippedGun.WeaponData == null)
@@ -1130,13 +1737,9 @@ public class NPCController : MonoBehaviour, IDamageable
 
             if (result.blocked)
             {
-                // NPC jest odporny albo damage = 0.
-                // Na razie bez efektów, żeby np. StoryCritical nie flashował od każdego trafienia.
                 return;
             }
 
-            // Synchronizacja starego HP z nowym NPCCore,
-            // żeby reszta starego NPCController dalej działała.
             currentHP = result.currentHP;
 
             preventedDeath = result.preventedDeath;
@@ -1144,7 +1747,6 @@ public class NPCController : MonoBehaviour, IDamageable
         }
         else
         {
-            // Fallback dla starych NPC bez NPCCore.
             currentHP -= damage;
             if (currentHP < 0f) currentHP = 0f;
 
@@ -1154,10 +1756,8 @@ public class NPCController : MonoBehaviour, IDamageable
         // =========================
         // 2. HIT FEEDBACK
         // =========================
-        if (flashCoroutine != null)
-            StopCoroutine(flashCoroutine);
 
-        flashCoroutine = StartCoroutine(FlashRedCoroutine(hitFlashDuration));
+        RestartLocalHitFlash();
 
         HitFeedbackUtility.PlayHitFx(
             transform,
@@ -1175,10 +1775,9 @@ public class NPCController : MonoBehaviour, IDamageable
         // =========================
         // 3. PREVENT DEATH
         // =========================
+
         if (preventedDeath)
         {
-            // NPC dostał obrażenia, ale NPCCore nie pozwala mu umrzeć.
-            // Zostaje na 1 HP i może reagować normalnie.
             currentHP = Mathf.Max(1f, currentHP);
 
             if (reactionType == NPCReactionType.Coward)
@@ -1207,11 +1806,9 @@ public class NPCController : MonoBehaviour, IDamageable
         {
             currentHP = 0f;
 
-            // Przy mocnym damage od granatu coroutine flash może zostać szybko zatrzymana przez Die(),
-            // więc ustawiamy czerwony kolor od razu.
-            ApplyBodyColor(Color.red);
+            if (UsesLocalColorFeedback())
+                ApplyBodyColor(Color.red);
 
-            // pozwól flash/blood FX wejść w tę klatkę
             StartCoroutine(CoDieAfterHitFrame());
             return;
         }
@@ -1262,14 +1859,12 @@ public class NPCController : MonoBehaviour, IDamageable
     {
         if (!CanBeRunOverByVehicle())
         {
-            // Później można tu dodać reakcję ochroniarza / NPC questowego.
             return;
         }
 
         pendingVehicleFall = true;
         pendingVehicleVelocity = vehicleVelocity;
         pendingVehicleSpeedKmh = speedKmh;
-        pendingVehicleHitPoint = hitPoint;
 
         lastAttacker = attackerName;
 
@@ -1285,7 +1880,6 @@ public class NPCController : MonoBehaviour, IDamageable
 
     public void TakeDamage(float dmg) => TakeDamage(Mathf.RoundToInt(dmg), "Unknown");
 
-    // ADD ▼ — permanenty zakaz „E” + brak kolizji z graczem
     private void DisableInteractionAndCollisionForever()
     {
         if (interactionDisabledForever) return;
@@ -1294,7 +1888,6 @@ public class NPCController : MonoBehaviour, IDamageable
         if (interactionColliders != null)
             foreach (var c in interactionColliders) if (c) c.enabled = false;
 
-        // wyłącz fizyczną kolizję z graczem
         if (player != null)
         {
             var playerCol = player.GetComponent<Collider>();
@@ -1326,11 +1919,9 @@ public class NPCController : MonoBehaviour, IDamageable
     {
         float t0 = Time.time;
 
-        // run into player pos
         Vector3 dir = (transform.position - (player ? GetCurrentTargetPosition() : transform.position)).normalized;
         if (dir.sqrMagnitude < 0.01f) dir = -transform.forward;
 
-        // first escape target
         Vector3 target = transform.position + dir * Mathf.Max(fleeDistance, fleeFarDistance);
         if (NavMesh.SamplePosition(target, out NavMeshHit hit, 3f, NavMesh.AllAreas))
             target = hit.position;
@@ -1342,12 +1933,10 @@ public class NPCController : MonoBehaviour, IDamageable
             agent.SetDestination(target);
         }
 
-        // minimum escape time + hold distance
         while (Time.time < cowardFleeSafeUntil)
         {
             if (agent != null && agent.isOnNavMesh && !agent.pathPending && agent.remainingDistance < 0.8f)
             {
-                // wybierz kolejny punkt jeszcze dalej
                 Vector3 away = (transform.position - (player ? GetCurrentTargetPosition() : transform.position)).normalized;
                 Vector3 t2 = transform.position + away * (fleeFarDistance * 0.6f + Random.Range(3f, 6f));
                 if (NavMesh.SamplePosition(t2, out NavMeshHit h2, 3f, NavMesh.AllAreas))
@@ -1356,19 +1945,19 @@ public class NPCController : MonoBehaviour, IDamageable
             yield return null;
         }
 
-        // after run - send last pos
         OnCowardReportedLastKnownPos?.Invoke(lastKnownAttackerPos);
 
         isFleeing = false;
 
-        // Coward back if not attacked and survived
         if (!isDead && reactionType == NPCReactionType.Coward)
         {
             isProvoked = false;
             investigatingShot = false;
 
             HideAllIcons();
-            ApplyBodyColor(defaultColor);
+
+            if (UsesLocalColorFeedback())
+                ApplyBodyColor(defaultColor);
 
             if (agent != null && agent.enabled && agent.isOnNavMesh)
             {
@@ -1386,14 +1975,12 @@ public class NPCController : MonoBehaviour, IDamageable
         StartCowardFlee();
     }
 
-    // ADD ▼ — fighter idzie „sprawdzić” meldunek Cowarda (investigate, nie od razu pościg)
     private void HandleCowardReported(Vector3 lastKnownPos)
     {
         if (reactionType != NPCReactionType.Fighter || isDead) return;
-        _defenseMode = true;                  // <— klucz
+        _defenseMode = true;  
         StartCoroutine(InvestigateRoutine(lastKnownPos));
     }
-
 
     private IEnumerator InvestigateRoutine(Vector3 pos)
     {
@@ -1417,7 +2004,6 @@ public class NPCController : MonoBehaviour, IDamageable
             yield return null;
         }
 
-        // zakończ patrol/check — ale zostaw _defenseMode na chwilę lub wyzeruj jeśli chcesz:
         _defenseMode = false;
     }
 
@@ -1425,7 +2011,9 @@ public class NPCController : MonoBehaviour, IDamageable
     {
         if (isDead) return;
         isDead = true;
-        Debug.Log($"DIE CALLED -> {name}");
+
+        if (debugLogs)
+            Debug.Log($"DIE CALLED -> {name}");
 
         if (core != null)
         {
@@ -1434,10 +2022,8 @@ public class NPCController : MonoBehaviour, IDamageable
 
         HideAllIcons();
 
-        // powiadom świadków
         OnNPCDied?.Invoke(this, lastAttacker);
 
-        // cache dropu zanim ruszymy broń
         InventoryItemInstance droppedInstance = null;
         GameObject pickupPrefab = null;
 
@@ -1447,7 +2033,6 @@ public class NPCController : MonoBehaviour, IDamageable
             pickupPrefab = GetPickupPrefabFromEquippedGun();
         }
 
-        // zatrzymaj wszystkie aktywne coroutines/logikę
         if (flashCoroutine != null) { StopCoroutine(flashCoroutine); flashCoroutine = null; }
         if (attackCoroutine != null) { StopCoroutine(attackCoroutine); attackCoroutine = null; }
 
@@ -1461,7 +2046,6 @@ public class NPCController : MonoBehaviour, IDamageable
 
         HideAllIcons();
 
-        // na śmierć wyłącz interakcyjne collidery
         if (interactionColliders != null)
         {
             foreach (var c in interactionColliders)
@@ -1473,7 +2057,9 @@ public class NPCController : MonoBehaviour, IDamageable
 
     private IEnumerator CoDieSequence(GameObject pickupPrefab, InventoryItemInstance droppedInstance)
     {
-        Debug.Log($"CoDieSequence START -> {name}");
+
+        if (debugLogs)
+            Debug.Log($"CoDieSequence START -> {name}");
 
         if (agent != null && agent.enabled)
         {
@@ -1494,7 +2080,7 @@ public class NPCController : MonoBehaviour, IDamageable
         if (cachedAnimator != null)
             cachedAnimator.enabled = false;
 
-        // KLUCZOWE:
+        // Prevent the ragdoll from pushing or blocking the player after death.
         IgnorePlayerCollisionsOnDeath();
 
         yield return new WaitForFixedUpdate();
@@ -1525,11 +2111,15 @@ public class NPCController : MonoBehaviour, IDamageable
 
             float speed01 = Mathf.InverseLerp(10f, 90f, pendingVehicleSpeedKmh);
 
-            // Przy małej prędkości NPC bardziej wpada pod auto.
-            // Przy dużej prędkości dostaje mocniejszy wyrzut do przodu i lekko w górę.
+            // At low speed the body falls more softly.
+            // At high speed it receives a stronger forward and upward impulse.
             float forwardImpulse = Mathf.Lerp(1.5f, 9.0f, speed01);
             float upwardImpulse = Mathf.Lerp(0.15f, 4.2f, speed01);
-            float torqueImpulse = Mathf.Lerp(1.0f, 8.0f, speed01);
+            float torqueImpulse = Mathf.Lerp(0.4f, 2.0f, speed01);
+
+            rootRb.linearDamping = 0.5f;
+            rootRb.angularDamping = 8f;
+            rootRb.maxAngularVelocity = 8f;
 
             rootRb.AddForce(
                 dir * forwardImpulse + Vector3.up * upwardImpulse,
@@ -1576,7 +2166,8 @@ public class NPCController : MonoBehaviour, IDamageable
             pendingMeleeFall = false;
         }
 
-        Debug.Log($"RAGDOLL ENABLED -> {name}");
+        if (debugLogs)
+            Debug.Log($"RAGDOLL ENABLED -> {name}");
 
         if (equippedGun != null)
         {
@@ -1618,33 +2209,32 @@ public class NPCController : MonoBehaviour, IDamageable
             if (r == null)
                 continue;
 
-            // Nie koloruj ikony Alert ani jej dzieci.
             if (alertIcon != null &&
                 (r.transform == alertIcon.transform || r.transform.IsChildOf(alertIcon.transform)))
             {
                 continue;
             }
 
-            // Nie koloruj ikony Scared ani jej dzieci.
+            // Do not color the scared icon or its children.
             if (scaredIcon != null &&
                 (r.transform == scaredIcon.transform || r.transform.IsChildOf(scaredIcon.transform)))
             {
                 continue;
             }
 
-            // Nie koloruj żadnej broni z WeaponsList.
+            // Do not color any weapons under WeaponsList.
             if (weaponsListRoot != null && r.transform.IsChildOf(weaponsListRoot))
             {
                 continue;
             }
 
-            // Nie koloruj obiektów, które są częścią NPCGun.
+            // Do not color objects that belong to NPCGun.
             if (r.GetComponentInParent<NPCGun>(true) != null)
             {
                 continue;
             }
 
-            // Dodatkowy bezpiecznik, jeśli bronie mają layer Weapon.
+            // Extra safety if weapons use the Weapon layer.
             if (weaponLayer >= 0 && r.gameObject.layer == weaponLayer)
             {
                 continue;
@@ -1663,7 +2253,7 @@ public class NPCController : MonoBehaviour, IDamageable
         Destroy(gameObject);
     }
 
-    // ===== BROŃ =====
+    // ===== WEAPON =====
     private void AssignRandomWeapon()
     {
         if (!useWeaponSystem)
@@ -1671,7 +2261,8 @@ public class NPCController : MonoBehaviour, IDamageable
 
         if (availableWeapons == null || availableWeapons.Length == 0)
         {
-            Debug.LogWarning($"[NPC] {name}: Brak dostępnych broni NPC.");
+            if (debugLogs)
+                Debug.LogWarning($"[NPC] {name}: No available NPC weapons.");
             return;
         }
 
@@ -1681,7 +2272,8 @@ public class NPCController : MonoBehaviour, IDamageable
 
         if (gunComponent == null)
         {
-            Debug.LogWarning($"[NPC] {name}: Wylosowana broń NPC jest null.");
+            if (debugLogs)
+                Debug.LogWarning($"[NPC] {name}: Rolled NPC weapon is null.");
             return;
         }
 
@@ -1694,7 +2286,8 @@ public class NPCController : MonoBehaviour, IDamageable
 
         assignedWeaponName = equippedGun.name;
 
-        Debug.Log($"[NPC] {name}: Assigned NPC weapon = {assignedWeaponName}, root = {weaponRoot?.name}");
+        if (debugLogs)
+            Debug.Log($"[NPC] {name}: Assigned NPC weapon = {assignedWeaponName}, root = {weaponRoot?.name}");
 
         RefreshBodyRenderers();
     }
@@ -1711,39 +2304,63 @@ public class NPCController : MonoBehaviour, IDamageable
         if (gunName.Contains("AK97")) return AK97Pickup;
         if (gunName.Contains("SPAS12")) return SPAS12Pickup;
 
-        Debug.Log($"[NPC] {name} pickupPrefab=null, gun='{gunName}'");
+        if (debugLogs)
+            Debug.Log($"[NPC] {name}: pickupPrefab=null, gun='{gunName}'");
         return null;
     }
 
-    // ===== PANIKA =====
+    // ===== PANIC =====
 
     private void PropagateCowardPanic()
     {
-        var nearby = Physics.OverlapSphere(transform.position, panicPropagationRadius);
+        int count = npcMask.value != 0
+            ? Physics.OverlapSphereNonAlloc(
+                transform.position,
+                panicPropagationRadius,
+                PanicOverlapBuffer,
+                npcMask,
+                QueryTriggerInteraction.Ignore
+            )
+            : Physics.OverlapSphereNonAlloc(
+                transform.position,
+                panicPropagationRadius,
+                PanicOverlapBuffer,
+                ~0,
+                QueryTriggerInteraction.Ignore
+            );
 
-        foreach (var col in nearby)
+        Vector3 panicSource = player != null
+            ? GetCurrentTargetPosition()
+            : transform.position;
+
+        for (int i = 0; i < count; i++)
         {
-            if (col == null) continue;
+            Collider col = PanicOverlapBuffer[i];
+            PanicOverlapBuffer[i] = null;
+
+            if (col == null)
+                continue;
 
             NPCController npc = col.GetComponentInParent<NPCController>();
-            if (npc == null) continue;
-            if (npc == this || npc.isDead) continue;
 
-            if (npc.reactionType == NPCReactionType.Coward)
-            {
-                npc.ReceivePanicFromWitness(player ? GetCurrentTargetPosition() : transform.position);
-            }
+            if (npc == null || npc == this || npc.isDead)
+                continue;
+
+            if (npc.reactionType != NPCReactionType.Coward)
+                continue;
+
+            npc.ReceivePanicFromWitness(panicSource);
         }
     }
 
     public void ReactToPanic()
     {
         if (isDead) return;
-        // zachowaj wsteczną kompatybilność: teraz też twardo blokujemy interakcję + uciekamy
+
         DisableInteractionAndCollisionForever();
         StartCowardFlee();
         reactionEndTime = Time.time + reactionDuration;
-        // FleeFromPlayer(); // niepotrzebne — StartCowardFlee() robi lepszą ucieczkę
+
     }
 
     private void OnTriggerEnter(Collider other)
@@ -1814,7 +2431,7 @@ public class NPCController : MonoBehaviour, IDamageable
 
         IgnoreDroppedPickupCollision(droppedPickup);
 
-        // bardzo lekki wyrzut
+        // Drop impulse.
         Vector3 lateral = transform.forward * 0.35f + transform.right * Random.Range(-0.10f, 0.10f);
         Vector3 impulse = lateral + Vector3.up * 0.04f;
 
@@ -1867,8 +2484,6 @@ public class NPCController : MonoBehaviour, IDamageable
 
         if (core != null)
         {
-            // Backstab traktujemy jako bardzo duże obrażenia,
-            // ale dalej pozwalamy NPCCore zdecydować, czy NPC może umrzeć.
             var result = core.TryTakeDamage(99999f, lastAttacker);
 
             if (result.blocked)
@@ -1880,10 +2495,7 @@ public class NPCController : MonoBehaviour, IDamageable
             {
                 currentHP = Mathf.Max(1f, currentHP);
 
-                if (flashCoroutine != null)
-                    StopCoroutine(flashCoroutine);
-
-                flashCoroutine = StartCoroutine(FlashRedCoroutine(hitFlashDuration));
+                RestartLocalHitFlash();
 
                 HitFeedbackUtility.PlayHitFx(
                     transform,
@@ -1914,14 +2526,14 @@ public class NPCController : MonoBehaviour, IDamageable
 
         deathSequenceStarted = true;
 
-        Debug.Log($"BACKSTAB KILL EXECUTED -> {name}");
+        if (debugLogs)
+            Debug.Log($"[NPC] Backstab kill executed -> {name}");
 
         currentHP = 0f;
 
         pendingBackstabFall = true;
 
-        if (flashCoroutine != null) StopCoroutine(flashCoroutine);
-        flashCoroutine = StartCoroutine(FlashRedCoroutine(hitFlashDuration));
+        RestartLocalHitFlash();
 
         HitFeedbackUtility.PlayHitFx(
             transform,
@@ -1949,7 +2561,7 @@ public class NPCController : MonoBehaviour, IDamageable
         bool shouldDie = false;
 
         // =========================
-        // 1. HP / DAMAGE LOGIC przez NPCCore
+        // 1. HP / DAMAGE LOGIC 
         // =========================
         if (core != null)
         {
@@ -1957,7 +2569,6 @@ public class NPCController : MonoBehaviour, IDamageable
 
             if (result.blocked)
             {
-                // NPC odporny, martwy albo damage = 0.
                 return;
             }
 
@@ -1967,7 +2578,7 @@ public class NPCController : MonoBehaviour, IDamageable
         }
         else
         {
-            // Fallback dla starych NPC bez NPCCore.
+            // Fallback for old NPC prefabs without NPCCore.
             currentHP -= Mathf.Max(0, damage);
             if (currentHP < 0f) currentHP = 0f;
 
@@ -1977,10 +2588,8 @@ public class NPCController : MonoBehaviour, IDamageable
         // =========================
         // 2. HIT FEEDBACK
         // =========================
-        if (flashCoroutine != null)
-            StopCoroutine(flashCoroutine);
 
-        flashCoroutine = StartCoroutine(FlashRedCoroutine(hitFlashDuration));
+        RestartLocalHitFlash();
 
         HitFeedbackUtility.PlayHitFx(
             transform,
@@ -2030,7 +2639,8 @@ public class NPCController : MonoBehaviour, IDamageable
             pendingMeleeFall = true;
             pendingMeleeAttackerPos = attackerPos;
 
-            ApplyBodyColor(Color.red);
+            if (UsesLocalColorFeedback())
+                ApplyBodyColor(Color.red);
 
             StartCoroutine(CoDieAfterHitFrame());
             return;
@@ -2090,8 +2700,6 @@ public class NPCController : MonoBehaviour, IDamageable
         if (gun == null)
             return null;
 
-        // NPCGun jest na WeaponLogic, więc rootem broni jest parent:
-        // AK97_NPC / Glock_NPC / M4A1_NPC / SPAS12_NPC
         if (gun.transform.parent != null)
             return gun.transform.parent.gameObject;
 
@@ -2180,8 +2788,13 @@ public class NPCController : MonoBehaviour, IDamageable
         investigatingShot = false;
         _defenseMode = false;
 
+        ResetCombatDestinationCache();
+
         HideAllIcons();
-        ApplyBodyColor(defaultColor);
+
+        if (UsesLocalColorFeedback())
+            ApplyBodyColor(defaultColor);
+
         HolsterWeapon(true);
 
         if (attackCoroutine != null)
@@ -2196,5 +2809,157 @@ public class NPCController : MonoBehaviour, IDamageable
             agent.ResetPath();
             PickNewDestination();
         }
+    }
+
+    private bool TryResolvePlayerRefs()
+    {
+        if (player != null && playerStats != null)
+            return true;
+
+        NPCSceneRefs refs = NPCSceneRefs.Instance;
+
+        if (refs != null && refs.HasPlayer())
+        {
+            player = refs.Player;
+            playerStats = refs.PlayerStats;
+            CachePlayerMotionRefs();
+            return player != null;
+        }
+
+        GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
+
+        if (playerGo == null)
+            return false;
+
+        player = playerGo.transform;
+        playerStats = playerGo.GetComponent<PlayerStats>();
+        CachePlayerMotionRefs();
+
+        return player != null;
+    }
+
+    private void CachePlayerMotionRefs()
+    {
+        if (player == null)
+            return;
+
+        playerCharacterController = player.GetComponent<CharacterController>();
+        playerRigidbody = player.GetComponent<Rigidbody>();
+        playerMovement = player.GetComponent<PlayerMovement>();
+
+        if (playerMovement == null)
+            playerMovement = player.GetComponentInParent<PlayerMovement>();
+
+        if (playerMovement == null)
+            playerMovement = player.GetComponentInChildren<PlayerMovement>(true);
+
+        NPCSceneRefs refs = NPCSceneRefs.Instance;
+
+        if (refs != null && refs.WeaponManager != null)
+            playerWeaponManager = refs.WeaponManager;
+        else
+            playerWeaponManager = FindFirstObjectByType<WeaponManager>(FindObjectsInactive.Include);
+
+        rearAwarenessPlayerPosInitialized = false;
+    }
+
+    private bool PlayerHasWeaponInHands()
+    {
+        if (playerWeaponManager == null)
+        {
+            NPCSceneRefs refs = NPCSceneRefs.Instance;
+
+            if (refs != null && refs.WeaponManager != null)
+                playerWeaponManager = refs.WeaponManager;
+            else
+                playerWeaponManager = FindFirstObjectByType<WeaponManager>(FindObjectsInactive.Include);
+        }
+
+        if (playerWeaponManager == null)
+            return true;
+
+        return !playerWeaponManager.IsUsingHandsOnly();
+    }
+
+    private void ResolvePlayerRefs()
+    {
+        TryResolvePlayerRefs();
+    }
+
+    private bool TrySetCombatDestination(Vector3 destination, float interval)
+    {
+        if (agent == null || !agent.enabled || !agent.isOnNavMesh)
+            return false;
+
+        interval = Mathf.Max(0.02f, interval);
+
+        if (hasLastCombatDestination)
+        {
+            float sqrDelta = (destination - lastCombatDestination).sqrMagnitude;
+            float minDelta = Mathf.Max(0.05f, minCombatDestinationMoveDelta);
+
+            if (Time.time < nextCombatDestinationUpdateTime &&
+                sqrDelta < minDelta * minDelta)
+            {
+                return false;
+            }
+        }
+
+        nextCombatDestinationUpdateTime = Time.time + interval;
+        lastCombatDestination = destination;
+        hasLastCombatDestination = true;
+
+        agent.SetDestination(destination);
+        return true;
+    }
+
+    private void ResetCombatDestinationCache()
+    {
+        hasLastCombatDestination = false;
+        nextCombatDestinationUpdateTime = 0f;
+    }
+
+    private void BeginRearAwarenessLook(Vector3 targetPos)
+    {
+        rearAwarenessLookTarget = targetPos;
+        rearAwarenessLookUntil = Time.time + rearAwarenessLookHoldTime;
+        rearAwarenessSuppressAutoAggroUntil = Time.time + rearAwarenessAutoAggroSuppressTime;
+        rearAwarenessStopUntil = Time.time + rearAwarenessStopDuration;
+
+        if (agent != null && agent.enabled && agent.isOnNavMesh && !isProvoked && !isFleeing)
+        {
+            agent.isStopped = true;
+            rearAwarenessPausedAgent = true;
+        }
+
+        FacePositionXZ(targetPos);
+
+        cachedPlayerInFrontAndVisible = false;
+        nextVisionCheckTime = Time.time + rearAwarenessAutoAggroSuppressTime;
+    }
+
+    private void ReleaseRearAwarenessStopIfNeeded()
+    {
+        if (!rearAwarenessPausedAgent)
+            return;
+
+        if (Time.time < rearAwarenessStopUntil)
+            return;
+
+        rearAwarenessPausedAgent = false;
+
+        if (agent != null && agent.enabled && agent.isOnNavMesh && !isDead && !isProvoked && !isFleeing)
+            agent.isStopped = false;
+    }
+
+    private void ClearRearAwarenessHold()
+    {
+        rearAwarenessLookUntil = 0f;
+        rearAwarenessSuppressAutoAggroUntil = 0f;
+        rearAwarenessStopUntil = 0f;
+        rearAwarenessPausedAgent = false;
+
+        if (agent != null && agent.enabled && agent.isOnNavMesh && !isDead)
+            agent.isStopped = false;
     }
 }

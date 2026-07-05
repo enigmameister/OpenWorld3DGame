@@ -16,18 +16,18 @@ public class NPCWorldCoordinator : MonoBehaviour
     [Header("Player")]
     [SerializeField] private Transform player;
 
-    [Header("Auto scan")]
+    [Header("Auto Scan")]
     [SerializeField] private bool scanSceneOnStart = true;
     [SerializeField] private bool rescanScenePeriodically = true;
     [SerializeField] private float rescanInterval = 5f;
 
-    [Header("LOD distances")]
+    [Header("LOD Distances")]
     [SerializeField] private float fullDistance = 60f;
     [SerializeField] private float simpleDistance = 120f;
     [SerializeField] private float sleepDistance = 180f;
 
-    [Header("Combat safety")]
-    [Tooltip("Jeœli NPC jest sprowokowany, trzymamy go aktywnego z wiêkszej odleg³oœci.")]
+    [Header("Combat Safety")]
+    [Tooltip("If an NPC is provoked, keep it active from a longer distance.")]
     [SerializeField] private float provokedDistanceMultiplier = 1.75f;
 
     [Header("Global NPC Budget")]
@@ -35,17 +35,17 @@ public class NPCWorldCoordinator : MonoBehaviour
     [SerializeField] private int globalMaxAmbientNPCs = 60;
     [SerializeField] private int globalMaxCombatNPCs = 20;
 
-    [Tooltip("Jeœli TRUE, Mission i StoryCritical nie wliczaj¹ siê do limitu Ambient.")]
+    [Tooltip("If TRUE, Mission and StoryCritical NPCs do not count toward the ambient limit.")]
     [SerializeField] private bool ignoreImportantNPCsForAmbientLimit = true;
 
-    [Header("Tick budget")]
-    [Tooltip("Co ile sekund koordynator sprawdza LOD. Nie rób tego co klatkê.")]
+    [Header("Tick Budget")]
+    [Tooltip("How often the coordinator checks LOD. Do not run this every frame.")]
     [SerializeField] private float lodTickInterval = 0.35f;
 
-    [Tooltip("Ilu NPC maksymalnie sprawdziæ w jednym ticku.")]
+    [Tooltip("Maximum number of NPCs checked in one LOD tick.")]
     [SerializeField] private int maxChecksPerTick = 20;
 
-    [Header("Sleeping settings")]
+    [Header("Sleeping Settings")]
     [SerializeField] private bool disableAnimatorInSleep = true;
     [SerializeField] private bool hideRenderersInSleep = false;
     [SerializeField] private bool disableReactiveInSimple = true;
@@ -58,6 +58,9 @@ public class NPCWorldCoordinator : MonoBehaviour
 
     [Header("Debug")]
     [SerializeField] private bool debugLogs = false;
+    [SerializeField] private bool debugRegistrationLogs = false;
+    [SerializeField] private bool debugLodLogs = false;
+    [SerializeField] private bool debugDespawnLogs = false;
     [SerializeField] private bool drawGizmos = true;
 
     private readonly List<NPCEntry> npcs = new();
@@ -69,6 +72,19 @@ public class NPCWorldCoordinator : MonoBehaviour
     private int lodIndex;
     private int despawnIndex;
     public int RegisteredCount => npcs.Count;
+
+    private int cachedAliveTotal;
+    private int cachedAliveAmbient;
+    private int cachedAliveCombat;
+
+    private bool budgetDirty = true;
+    private float nextBudgetRefreshTime;
+
+    [SerializeField] private float budgetRefreshInterval = 0.25f;
+
+    private bool listDirty;
+    private float nextCleanupTime;
+    [SerializeField] private float cleanupInterval = 1.0f;
 
     private class NPCEntry
     {
@@ -109,12 +125,7 @@ public class NPCWorldCoordinator : MonoBehaviour
 
         Instance = this;
 
-        if (player == null)
-        {
-            GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
-            if (playerGo != null)
-                player = playerGo.transform;
-        }
+        ResolvePlayerRef();
     }
 
     private void Start()
@@ -123,39 +134,103 @@ public class NPCWorldCoordinator : MonoBehaviour
             ScanSceneForNPCs();
     }
 
+    private bool ResolvePlayerRef()
+    {
+        if (player != null)
+            return true;
+
+        NPCSceneRefs refs = NPCSceneRefs.Instance;
+
+        if (refs != null && refs.HasPlayer())
+        {
+            player = refs.Player;
+            return player != null;
+        }
+
+        GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
+
+        if (playerGo != null)
+        {
+            player = playerGo.transform;
+            return true;
+        }
+
+        return false;
+    }
+
     private void Update()
     {
-        if (player == null)
-        {
-            GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
-            if (playerGo != null)
-                player = playerGo.transform;
+        if (!ResolvePlayerRef())
+            return;
 
-            if (player == null)
-                return;
-        }
+        TickCleanup();
+        TickSceneRescan();
+        TickLodAndDespawn();
+    }
+
+    private void TickCleanup()
+    {
+        CleanupNullsThrottled();
+    }
+
+    private void TickSceneRescan()
+    {
+        if (!rescanScenePeriodically)
+            return;
+
+        rescanTimer += Time.deltaTime;
+
+        if (rescanTimer < rescanInterval)
+            return;
+
+        rescanTimer = 0f;
+        ScanSceneForNPCs();
+    }
+
+    private void TickLodAndDespawn()
+    {
+        lodTimer += Time.deltaTime;
+
+        if (lodTimer < lodTickInterval)
+            return;
+
+        lodTimer = 0f;
+
+        RefreshLodSlice();
+
+        if (despawnFarAmbientNPCs)
+            RefreshAmbientDespawnSlice();
+    }
+
+    private void ClampIterationIndices()
+    {
+        if (lodIndex >= npcs.Count)
+            lodIndex = 0;
+
+        if (despawnIndex >= npcs.Count)
+            despawnIndex = 0;
+    }
+
+    private void RequestCleanup()
+    {
+        listDirty = true;
+        RequestBudgetRefresh();
+    }
+
+    private void RequestBudgetRefresh()
+    {
+        budgetDirty = true;
+    }
+
+    private void CleanupNullsThrottled()
+    {
+        if (!listDirty && Time.time < nextCleanupTime)
+            return;
+
+        nextCleanupTime = Time.time + cleanupInterval;
+        listDirty = false;
 
         CleanupNulls();
-
-        if (rescanScenePeriodically)
-        {
-            rescanTimer += Time.deltaTime;
-            if (rescanTimer >= rescanInterval)
-            {
-                rescanTimer = 0f;
-                ScanSceneForNPCs();
-            }
-        }
-
-        lodTimer += Time.deltaTime;
-        if (lodTimer >= lodTickInterval)
-        {
-            lodTimer = 0f;
-            RefreshLodSlice();
-
-            if (despawnFarAmbientNPCs)
-                RefreshAmbientDespawnSlice();
-        }
     }
 
     public void RegisterNPC(GameObject npcRoot)
@@ -171,12 +246,13 @@ public class NPCWorldCoordinator : MonoBehaviour
         if (entry == null)
             return;
 
-        // Nie rejestruj martwych cia³ ponownie podczas okresowego skanowania sceny.
+        // Do not register dead bodies again during periodic scene scans.
         if (entry.core != null && entry.core.IsDead)
             return;
 
         npcs.Add(entry);
         registeredRoots.Add(root);
+        RequestBudgetRefresh();
 
         if (entry.core != null && !coreToEntry.ContainsKey(entry.core))
         {
@@ -184,49 +260,69 @@ public class NPCWorldCoordinator : MonoBehaviour
             entry.core.Died += OnCoreDied;
         }
 
-        ApplyLod(entry, NPCLodState.Full, force: true);
+        NPCLodState initialState = NPCLodState.Full;
 
-        if (debugLogs)
-            Debug.Log($"[NPCWorldCoordinator] Registered NPC: {root.name}");
+        if (player != null)
+        {
+            Vector3 playerTargetPos = NPCPlayerTargetUtility.GetTargetPosition(player);
+            initialState = GetTargetLodState(entry, playerTargetPos);
+        }
+
+        ApplyLod(entry, initialState, force: true);
+
+        LogRegistration($"[NPCWorldCoordinator] Registered NPC: {root.name}");
     }
 
     public void UnregisterNPC(GameObject npcRoot)
     {
-        if (npcRoot == null) return;
+        if (npcRoot == null)
+            return;
 
         for (int i = npcs.Count - 1; i >= 0; i--)
         {
             NPCEntry entry = npcs[i];
 
-            if (entry == null || entry.root == npcRoot)
+            if (entry == null)
             {
-                UnsubscribeEntry(entry);
-
-                if (entry != null && entry.root != null)
-                    registeredRoots.Remove(entry.root);
-
                 npcs.RemoveAt(i);
+                continue;
             }
+
+            if (entry.root != npcRoot)
+                continue;
+
+            RemoveEntryAt(i);
         }
 
-        if (lodIndex >= npcs.Count)
-            lodIndex = 0;
+        ClampIterationIndices();
+        RequestCleanup();
+        RequestBudgetRefresh();
+    }
 
-        if (despawnIndex >= npcs.Count)
-            despawnIndex = 0;
+    private void RemoveEntryAt(int index)
+    {
+        if (index < 0 || index >= npcs.Count)
+            return;
+
+        NPCEntry entry = npcs[index];
+
+        UnsubscribeEntry(entry);
+
+        if (entry != null && entry.root != null)
+            registeredRoots.Remove(entry.root);
+
+        npcs.RemoveAt(index);
     }
 
     public bool CanSpawnAmbientNPC()
     {
-        CleanupNulls();
+        CleanupNullsThrottled();
+        RefreshBudgetCountsIfNeeded();
 
-        int aliveTotal = CountAliveNPCs();
-        int aliveAmbient = CountAliveAmbientNPCs();
-
-        if (aliveTotal >= globalMaxAliveNPCs)
+        if (cachedAliveTotal >= globalMaxAliveNPCs)
             return false;
 
-        if (aliveAmbient >= globalMaxAmbientNPCs)
+        if (cachedAliveAmbient >= globalMaxAmbientNPCs)
             return false;
 
         return true;
@@ -234,35 +330,131 @@ public class NPCWorldCoordinator : MonoBehaviour
 
     public bool CanSpawnCombatNPC()
     {
-        CleanupNulls();
+        CleanupNullsThrottled();
+        RefreshBudgetCountsIfNeeded();
 
-        int aliveTotal = CountAliveNPCs();
-        int aliveCombat = CountAliveCombatNPCs();
-
-        if (aliveTotal >= globalMaxAliveNPCs)
+        if (cachedAliveTotal >= globalMaxAliveNPCs)
             return false;
 
-        if (aliveCombat >= globalMaxCombatNPCs)
+        if (cachedAliveCombat >= globalMaxCombatNPCs)
             return false;
 
         return true;
     }
 
-    public int CountAliveNPCs()
+    private NPCLodState GetTargetLodState(NPCEntry entry, Vector3 playerTargetPos)
     {
-        int count = 0;
+        if (entry == null || entry.root == null)
+            return NPCLodState.Sleeping;
+
+        if (IsDead(entry))
+            return NPCLodState.Full;
+
+        if (IsProtectedNPC(entry))
+            return NPCLodState.Full;
+
+        float sqrDist = (entry.transform.position - playerTargetPos).sqrMagnitude;
+
+        bool provoked = IsProvoked(entry);
+
+        float fullDist = fullDistance;
+        float simpleDist = simpleDistance;
+
+        if (provoked)
+        {
+            fullDist *= provokedDistanceMultiplier;
+            simpleDist *= provokedDistanceMultiplier;
+        }
+
+        float fullSqr = fullDist * fullDist;
+        float simpleSqr = simpleDist * simpleDist;
+
+        if (sqrDist <= fullSqr)
+            return NPCLodState.Full;
+
+        if (sqrDist <= simpleSqr)
+            return NPCLodState.Simple;
+
+        return IsImportantNPC(entry)
+            ? NPCLodState.Simple
+            : NPCLodState.Sleeping;
+    }
+
+    private void RefreshBudgetCountsIfNeeded()
+    {
+        if (!budgetDirty && Time.time < nextBudgetRefreshTime)
+            return;
+
+        nextBudgetRefreshTime = Time.time + budgetRefreshInterval;
+        budgetDirty = false;
+
+        RecalculateBudgetCounts();
+    }
+
+    private void RecalculateBudgetCounts()
+    {
+        cachedAliveTotal = 0;
+        cachedAliveAmbient = 0;
+        cachedAliveCombat = 0;
 
         for (int i = 0; i < npcs.Count; i++)
         {
             NPCEntry entry = npcs[i];
-            if (entry == null || entry.root == null) continue;
 
-            if (IsDead(entry)) continue;
+            if (entry == null || entry.root == null)
+                continue;
 
-            count++;
+            if (IsDead(entry))
+                continue;
+
+            cachedAliveTotal++;
+
+            if (IsCombatNPC(entry))
+            {
+                cachedAliveCombat++;
+                continue;
+            }
+
+            if (IsAmbientBudgetNPC(entry))
+                cachedAliveAmbient++;
         }
+    }
 
-        return count;
+    private bool IsCombatNPC(NPCEntry entry)
+    {
+        if (entry == null)
+            return false;
+
+        if (entry.melee != null)
+            return true;
+
+        if (entry.controller == null)
+            return false;
+
+        NPCController.NPCReactionType type = entry.controller.GetReactionType();
+
+        return type == NPCController.NPCReactionType.Aggressive ||
+               type == NPCController.NPCReactionType.Fighter;
+    }
+
+    private bool IsAmbientBudgetNPC(NPCEntry entry)
+    {
+        if (entry == null)
+            return false;
+
+        if (entry.core == null)
+            return true;
+
+        if (entry.core.Importance == NPCCore.NPCImportance.Ambient)
+            return true;
+
+        return !ignoreImportantNPCsForAmbientLimit;
+    }
+
+    public int CountAliveNPCs()
+    {
+        RefreshBudgetCountsIfNeeded();
+        return cachedAliveTotal;
     }
 
     public int CountAliveAmbientNPCs()
@@ -294,58 +486,31 @@ public class NPCWorldCoordinator : MonoBehaviour
 
     public int CountAliveCombatNPCs()
     {
-        int count = 0;
-
-        for (int i = 0; i < npcs.Count; i++)
-        {
-            NPCEntry entry = npcs[i];
-            if (entry == null || entry.root == null) continue;
-
-            if (IsDead(entry)) continue;
-
-            bool isCombat = false;
-
-            if (entry.melee != null)
-            {
-                isCombat = true;
-            }
-            else if (entry.controller != null)
-            {
-                var type = entry.controller.GetReactionType();
-
-                isCombat =
-                    type == NPCController.NPCReactionType.Aggressive ||
-                    type == NPCController.NPCReactionType.Fighter;
-            }
-
-            if (isCombat)
-                count++;
-        }
-
-        return count;
+        RefreshBudgetCountsIfNeeded();
+        return cachedAliveCombat;
     }
 
     private void OnCoreDied(NPCCore core, string attackerName)
     {
-        if (core == null) return;
+        if (core == null)
+            return;
 
         if (!coreToEntry.TryGetValue(core, out NPCEntry entry))
             return;
 
-        if (debugLogs && entry != null && entry.root != null)
-            Debug.Log($"[NPCWorldCoordinator] NPC died, unregistering from LOD: {entry.root.name}");
-
         if (entry != null && entry.root != null)
-            registeredRoots.Remove(entry.root);
+            LogRegistration($"[NPCWorldCoordinator] NPC died, unregistering from LOD: {entry.root.name}");
 
-        UnsubscribeEntry(entry);
-        npcs.Remove(entry);
+        int index = npcs.IndexOf(entry);
 
-        if (lodIndex >= npcs.Count)
-            lodIndex = 0;
+        if (index >= 0)
+            RemoveEntryAt(index);
+        else
+            UnsubscribeEntry(entry);
 
-        if (despawnIndex >= npcs.Count)
-            despawnIndex = 0;
+        ClampIterationIndices();
+        RequestCleanup();
+        RequestBudgetRefresh();
     }
 
     private void UnsubscribeEntry(NPCEntry entry)
@@ -442,6 +607,7 @@ public class NPCWorldCoordinator : MonoBehaviour
             return;
 
         int checkedCount = 0;
+        Vector3 playerTargetPos = NPCPlayerTargetUtility.GetTargetPosition(player);
 
         while (checkedCount < maxChecksPerTick && npcs.Count > 0)
         {
@@ -452,70 +618,25 @@ public class NPCWorldCoordinator : MonoBehaviour
 
             if (entry == null || entry.root == null)
             {
-                npcs.RemoveAt(lodIndex);
+                RemoveEntryAt(lodIndex);
+                ClampIterationIndices();
                 checkedCount++;
                 continue;
             }
 
-            RefreshSingleNPC(entry);
+            RefreshSingleNPC(entry, playerTargetPos);
 
             lodIndex++;
             checkedCount++;
         }
     }
 
-    private void RefreshSingleNPC(NPCEntry entry)
+    private void RefreshSingleNPC(NPCEntry entry, Vector3 playerTargetPos)
     {
         if (entry == null || entry.root == null || player == null)
             return;
 
-        bool isDead = IsDead(entry);
-        if (isDead)
-        {
-            ApplyLod(entry, NPCLodState.Full);
-            return;
-        }
-
-        if (IsProtectedNPC(entry))
-        {
-            ApplyLod(entry, NPCLodState.Full);
-            return;
-        }
-
-        Vector3 targetPos = NPCPlayerTargetUtility.GetTargetPosition(player);
-        float sqrDist = (entry.transform.position - targetPos).sqrMagnitude;
-
-        bool provoked = IsProvoked(entry);
-
-        float fullDist = fullDistance;
-        float simpleDist = simpleDistance;
-
-        if (provoked)
-        {
-            fullDist *= provokedDistanceMultiplier;
-            simpleDist *= provokedDistanceMultiplier;
-        }
-
-        float fullSqr = fullDist * fullDist;
-        float simpleSqr = simpleDist * simpleDist;
-
-        NPCLodState targetState;
-
-        if (sqrDist <= fullSqr)
-        {
-            targetState = NPCLodState.Full;
-        }
-        else if (sqrDist <= simpleSqr)
-        {
-            targetState = NPCLodState.Simple;
-        }
-        else
-        {
-            targetState = IsImportantNPC(entry)
-                ? NPCLodState.Simple
-                : NPCLodState.Sleeping;
-        }
-
+        NPCLodState targetState = GetTargetLodState(entry, playerTargetPos);
         ApplyLod(entry, targetState);
     }
 
@@ -564,8 +685,7 @@ public class NPCWorldCoordinator : MonoBehaviour
                 break;
         }
 
-        if (debugLogs)
-            Debug.Log($"[NPCWorldCoordinator] {entry.root.name} -> {targetState}");
+        LogLod($"[NPCWorldCoordinator] {entry.root.name} -> {targetState}");
     }
 
     private void ApplyFull(NPCEntry entry)
@@ -582,7 +702,7 @@ public class NPCWorldCoordinator : MonoBehaviour
 
     private void ApplySimple(NPCEntry entry)
     {
-        // Simple zostawia ruch/animacje, ale ogranicza interakcje.
+        // Simple mode keeps movement and animation enabled, but disables interaction.
         SetControllerEnabled(entry, true);
         SetMeleeEnabled(entry, true);
 
@@ -726,26 +846,23 @@ public class NPCWorldCoordinator : MonoBehaviour
 
     private void CleanupNulls()
     {
+        bool removedAny = false;
+
         for (int i = npcs.Count - 1; i >= 0; i--)
         {
             NPCEntry entry = npcs[i];
 
-            if (entry == null || entry.root == null)
-            {
-                UnsubscribeEntry(entry);
+            if (entry != null && entry.root != null)
+                continue;
 
-                if (entry != null && entry.root != null)
-                    registeredRoots.Remove(entry.root);
-
-                npcs.RemoveAt(i);
-            }
+            RemoveEntryAt(i);
+            removedAny = true;
         }
 
-        if (lodIndex >= npcs.Count)
-            lodIndex = 0;
+        ClampIterationIndices();
 
-        if (despawnIndex >= npcs.Count)
-            despawnIndex = 0;
+        if (removedAny)
+            RequestBudgetRefresh();
     }
 
     private void RefreshAmbientDespawnSlice()
@@ -754,6 +871,7 @@ public class NPCWorldCoordinator : MonoBehaviour
             return;
 
         int checkedCount = 0;
+        Vector3 playerTargetPos = NPCPlayerTargetUtility.GetTargetPosition(player);
 
         while (checkedCount < maxDespawnChecksPerTick && npcs.Count > 0)
         {
@@ -764,19 +882,20 @@ public class NPCWorldCoordinator : MonoBehaviour
 
             if (entry == null || entry.root == null)
             {
-                npcs.RemoveAt(despawnIndex);
+                RemoveEntryAt(despawnIndex);
+                ClampIterationIndices();
                 checkedCount++;
                 continue;
             }
 
-            CheckAmbientDespawn(entry);
+            CheckAmbientDespawn(entry, playerTargetPos);
 
             despawnIndex++;
             checkedCount++;
         }
     }
 
-    private void CheckAmbientDespawn(NPCEntry entry)
+    private void CheckAmbientDespawn(NPCEntry entry, Vector3 playerTargetPos)
     {
         if (entry == null || entry.root == null)
             return;
@@ -802,10 +921,10 @@ public class NPCWorldCoordinator : MonoBehaviour
             return;
         }
 
-        Vector3 targetPos = NPCPlayerTargetUtility.GetTargetPosition(player);
-        float dist = Vector3.Distance(entry.transform.position, targetPos);
+        float sqrDist = (entry.transform.position - playerTargetPos).sqrMagnitude;
+        float despawnSqr = ambientDespawnDistance * ambientDespawnDistance;
 
-        if (dist < ambientDespawnDistance)
+        if (sqrDist < despawnSqr)
         {
             entry.farFromPlayerSince = -1f;
             return;
@@ -820,31 +939,23 @@ public class NPCWorldCoordinator : MonoBehaviour
         if (Time.time - entry.farFromPlayerSince < ambientDespawnDelay)
             return;
 
-        DespawnAmbientNPC(entry);
+        DespawnNonProtectedNPC(entry);
     }
 
-    private void DespawnAmbientNPC(NPCEntry entry)
+    private void DespawnNonProtectedNPC(NPCEntry entry)
     {
         if (entry == null || entry.root == null)
             return;
 
-        if (debugLogs)
-            Debug.Log($"[NPCWorldCoordinator] Despawn ambient NPC: {entry.root.name}");
+        LogDespawn($"[NPCWorldCoordinator] Despawn non-protected NPC: {entry.root.name}");
 
         GameObject root = entry.root;
 
         UnregisterNPC(root);
         Destroy(root);
 
-        if (despawnIndex >= npcs.Count)
-            despawnIndex = 0;
-    }
-
-    public string GetBudgetDebugText()
-    {
-        return $"NPC Budget: Alive={CountAliveNPCs()}/{globalMaxAliveNPCs}, " +
-               $"Ambient={CountAliveAmbientNPCs()}/{globalMaxAmbientNPCs}, " +
-               $"Combat={CountAliveCombatNPCs()}/{globalMaxCombatNPCs}";
+        ClampIterationIndices();
+        RequestCleanup();
     }
 
     private bool IsImportantNPC(NPCEntry entry)
@@ -879,6 +990,33 @@ public class NPCWorldCoordinator : MonoBehaviour
         return false;
     }
 
+    public string GetBudgetDebugText()
+    {
+        RefreshBudgetCountsIfNeeded();
+
+        return $"NPC Budget: Alive={cachedAliveTotal}/{globalMaxAliveNPCs}, " +
+               $"Ambient={cachedAliveAmbient}/{globalMaxAmbientNPCs}, " +
+               $"Combat={cachedAliveCombat}/{globalMaxCombatNPCs}";
+    }
+
+    private void LogRegistration(string message)
+    {
+        if (debugLogs || debugRegistrationLogs)
+            Debug.Log(message);
+    }
+
+    private void LogLod(string message)
+    {
+        if (debugLogs || debugLodLogs)
+            Debug.Log(message);
+    }
+
+    private void LogDespawn(string message)
+    {
+        if (debugLogs || debugDespawnLogs)
+            Debug.Log(message);
+    }
+
 #if UNITY_EDITOR
     private void OnDrawGizmosSelected()
     {
@@ -887,14 +1025,18 @@ public class NPCWorldCoordinator : MonoBehaviour
 
         Vector3 center = transform.position;
 
-        if (player != null)
-            center = player.position;
-        else
+        Transform playerTransform = player;
+
+        if (playerTransform == null)
         {
-            GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
-            if (playerGo != null)
-                center = playerGo.transform.position;
+            NPCSceneRefs refs = NPCSceneRefs.Instance;
+
+            if (refs != null && refs.HasPlayer())
+                playerTransform = refs.Player;
         }
+
+        if (playerTransform != null)
+            center = playerTransform.position;
 
         Gizmos.color = Color.green;
         Gizmos.DrawWireSphere(center, fullDistance);

@@ -4,7 +4,7 @@ public class DoorUseZoneRelay : MonoBehaviour
 {
     public bool PlayerInside { get; private set; }
     [SerializeField] string requiredTag = "Player";
-    [SerializeField] bool verboseLogging = true;
+   // [SerializeField] bool verboseLogging = true; Debug opening side
 
     DoorInteract _door; bool _isFront;
 
@@ -12,14 +12,14 @@ public class DoorUseZoneRelay : MonoBehaviour
     {
         _door = door; _isFront = isFront;
         requiredTag = string.IsNullOrEmpty(reqTag) ? "Player" : reqTag;
-        if (verboseLogging) Debug.Log($"[Relay:{name}] Bind -> isFront={_isFront}, tag={requiredTag}", this);
+     //   if (verboseLogging) Debug.Log($"[Relay:{name}] Bind -> isFront={_isFront}, tag={requiredTag}", this);
     }
 
     void OnTriggerEnter(Collider other)
     {
         if (!other.CompareTag(requiredTag)) return;
         PlayerInside = true;
-        if (verboseLogging) Debug.Log($"[Relay:{name}] ENTER by {other.name} (PlayerInside=true)", this);
+     //   if (verboseLogging) Debug.Log($"[Relay:{name}] ENTER by {other.name} (PlayerInside=true)", this);
         _door?.ZoneEnter(_isFront);
     }
 
@@ -27,7 +27,7 @@ public class DoorUseZoneRelay : MonoBehaviour
     {
         if (!other.CompareTag(requiredTag)) return;
         PlayerInside = false;
-        if (verboseLogging) Debug.Log($"[Relay:{name}] EXIT by {other.name} (PlayerInside=false)", this);
+    //    if (verboseLogging) Debug.Log($"[Relay:{name}] EXIT by {other.name} (PlayerInside=false)", this);
         _door?.ZoneExit(_isFront);
     }
 }

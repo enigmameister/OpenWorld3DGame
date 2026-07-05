@@ -131,7 +131,15 @@ public class DialogueWindowUI : MonoBehaviour
         if (historyText != null)
             historyText.richText = true;
 
-        cachedWeaponManager = FindFirstObjectByType<WeaponManager>();
+        if (NPCSceneRefs.Instance != null)
+            cachedWeaponManager = NPCSceneRefs.Instance.WeaponManager;
+
+        if (cachedWeaponManager == null)
+            if (NPCSceneRefs.Instance != null)
+                cachedWeaponManager = NPCSceneRefs.Instance.WeaponManager;
+
+        if (cachedWeaponManager == null)
+            cachedWeaponManager = FindFirstObjectByType<WeaponManager>();
 
         ConfigureCurrentLineScrollbar();
         CloseWindowImmediate();
@@ -858,6 +866,14 @@ public class DialogueWindowUI : MonoBehaviour
         if (disableWeaponManagerDuringDialogue)
         {
             if (cachedWeaponManager == null)
+                if (NPCSceneRefs.Instance != null)
+                    cachedWeaponManager = NPCSceneRefs.Instance.WeaponManager;
+
+            if (cachedWeaponManager == null)
+                if (NPCSceneRefs.Instance != null)
+                    cachedWeaponManager = NPCSceneRefs.Instance.WeaponManager;
+
+            if (cachedWeaponManager == null)
                 cachedWeaponManager = FindFirstObjectByType<WeaponManager>();
 
             if (cachedWeaponManager != null)
@@ -876,6 +892,14 @@ public class DialogueWindowUI : MonoBehaviour
 
         Cursor.visible = false;
         Cursor.lockState = CursorLockMode.Locked;
+
+        if (cachedWeaponManager == null)
+            if (NPCSceneRefs.Instance != null)
+                cachedWeaponManager = NPCSceneRefs.Instance.WeaponManager;
+
+        if (cachedWeaponManager == null)
+            if (NPCSceneRefs.Instance != null)
+                cachedWeaponManager = NPCSceneRefs.Instance.WeaponManager;
 
         if (cachedWeaponManager == null)
             cachedWeaponManager = FindFirstObjectByType<WeaponManager>();

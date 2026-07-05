@@ -559,8 +559,6 @@ public class CarInteraction : MonoBehaviour
             }
 
             carRb.constraints = RigidbodyConstraints.FreezeAll;
-            carRb.linearVelocity = Vector3.zero;
-            carRb.angularVelocity = Vector3.zero;
             carRb.Sleep();
 
             if (ignorePlayerCollisionWhenParked && _carCols != null && _playerCols != null)

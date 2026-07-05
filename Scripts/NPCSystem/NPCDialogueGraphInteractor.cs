@@ -60,17 +60,12 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
         if (missionGiver == null)
             missionGiver = GetComponent<NPCMissionGiver>();
 
-        if (missionListUI == null)
-            missionListUI = FindFirstObjectByType<NPCMissionListUI>(FindObjectsInactive.Include);
+        ResolveSceneRefs();
     }
+
     private void Start()
     {
-        GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
-        if (playerGo != null)
-            player = playerGo.transform;
-
-        dialogueUi = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
-        bankUi = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
+        ResolveSceneRefs();
 
         originalRotation = transform.rotation;
         playerCam = Camera.main;
@@ -101,6 +96,34 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
             return;
 
         StartDialogue();
+    }
+
+    private void ResolveSceneRefs()
+    {
+        NPCSceneRefs refs = NPCSceneRefs.Instance;
+
+        if (refs != null)
+        {
+            if (player == null)
+                player = refs.Player;
+
+            if (dialogueUi == null)
+                dialogueUi = refs.DialogueGraphUI;
+
+            if (missionListUI == null)
+                missionListUI = refs.MissionListUI;
+
+            if (bankUi == null)
+                bankUi = refs.BankDialogueUI;
+        }
+
+        if (player == null)
+        {
+            GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
+
+            if (playerGo != null)
+                player = playerGo.transform;
+        }
     }
 
     private void OnTriggerEnter(Collider other)
@@ -167,8 +190,8 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
     {
         if (missionGiver != null && missionGiver.HasAnyMission())
         {
-            if (missionListUI == null)
-                missionListUI = FindFirstObjectByType<NPCMissionListUI>(FindObjectsInactive.Include);
+            if (missionListUI == null && NPCSceneRefs.Instance != null)
+                missionListUI = NPCSceneRefs.Instance.MissionListUI;
 
             if (missionListUI != null)
             {
@@ -180,10 +203,13 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
                     return;
                 }
 
-                BankDialogueUI bankUi = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
+                BankDialogueUI bankWindow = bankUi;
 
-                if (bankUi != null && bankUi.IsOpen)
-                    bankUi.Close();
+                if (bankWindow == null && NPCSceneRefs.Instance != null)
+                    bankWindow = NPCSceneRefs.Instance.BankDialogueUI;
+
+                if (bankWindow != null && bankWindow.IsOpen)
+                    bankWindow.Close();
 
                 missionListUI.Open(missionGiver, this);
                 return;
@@ -212,9 +238,12 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
         if (graph == null)
             return;
 
-        DialogueGraphUI ui = FindFirstObjectByType<DialogueGraphUI>(FindObjectsInactive.Include);
+        DialogueGraphUI graphUi = dialogueUi;
 
-        if (ui == null)
+        if (graphUi == null && NPCSceneRefs.Instance != null)
+            graphUi = NPCSceneRefs.Instance.DialogueGraphUI;
+
+        if (graphUi == null)
         {
             if (debugLogs)
                 Debug.LogWarning("[NPCDialogueGraphInteractor] DialogueGraphUI not found in scene.");
@@ -222,11 +251,19 @@ public class NPCDialogueGraphInteractor : MonoBehaviour
             return;
         }
 
-        BankDialogueUI bankUi = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
-        if (bankUi != null && bankUi.IsOpen)
-            bankUi.Close();
+        BankDialogueUI bankWindow = bankUi;
 
-        ui.Open(graph, string.IsNullOrWhiteSpace(speaker) ? speakerName : speaker, this);
+        if (bankWindow == null && NPCSceneRefs.Instance != null)
+            bankWindow = NPCSceneRefs.Instance.BankDialogueUI;
+
+        if (bankWindow != null && bankWindow.IsOpen)
+            bankWindow.Close();
+
+        graphUi.Open(
+            graph,
+            string.IsNullOrWhiteSpace(speaker) ? speakerName : speaker,
+            this
+        );
     }
 
     private DialogueGraph ResolveGraph()

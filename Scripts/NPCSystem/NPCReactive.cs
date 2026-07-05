@@ -1,105 +1,149 @@
-﻿using System.Linq;
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.AI;
 
 public class NPCReactive : MonoBehaviour
 {
-    [Header("Interakcja / Bark")]
+    // =========================================================
+    // INTERACTION / BARK
+    // =========================================================
+
+    [Header("Interaction / Bark")]
     [SerializeField] private float interactRadius = 2.5f;
 
-    [Tooltip("Jeśli TRUE: zwykły bark odpala się automatycznie po wejściu gracza w trigger NPC.")]
+    [Tooltip("If TRUE, regular NPC bark is triggered automatically when player enters NPC trigger.")]
     [SerializeField] private bool barkOnTriggerEnter = true;
 
-    [Tooltip("Jeśli TRUE: NPC specjalny używa klawisza E zamiast auto barku.")]
+    [Tooltip("If TRUE, special NPCs use interact key instead of automatic bark.")]
     [SerializeField] private bool useKeyInteraction = false;
 
-    [Tooltip("Jeśli TRUE: NPC może ponawiać bark, gdy gracz stoi obok.")]
+    [Tooltip("If TRUE, NPC can repeat bark lines while player remains nearby.")]
     [SerializeField] private bool repeatBarkWhileNearby = false;
 
     [SerializeField] private float barkCooldown = 3.0f;
     [SerializeField] private Vector2 repeatBarkIntervalRange = new Vector2(4f, 8f);
 
-    [Header("Śledzenie po interakcji")]
+    [Header("Interaction Tracking")]
     [SerializeField] private float detectionRadius = 10f;
     [SerializeField] private float lingerTime = 2f;
     [SerializeField] private float interactFaceDuration = 0.6f;
 
-    [Header("Obrót (deg/s)")]
+    // =========================================================
+    // ROTATION / FACING
+    // =========================================================
+
+    [Header("Rotation Speed")]
     [SerializeField] private float interactTurnSpeed = 720f;
     [SerializeField] private float idleTurnSpeed = 240f;
     [SerializeField] private float returnTurnSpeed = 180f;
 
-    [Header("Smooth Turn")]
+    [Header("Smooth Rotation")]
     [SerializeField] private bool useSmoothTurn = true;
     [SerializeField] private float interactSmoothTime = 0.12f;
     [SerializeField] private float idleSmoothTime = 0.18f;
     [SerializeField] private float returnSmoothTime = 0.25f;
     [SerializeField] private float maxTurnSpeed = 720f;
 
-    private float turnVelocity;
+    // =========================================================
+    // VISUAL FEEDBACK
+    // =========================================================
 
-    [Header("Kolory (interakcja)")]
+    [Header("Interaction Color")]
     [SerializeField] private Color interactColor = Color.black;
     [SerializeField] private Transform bodyRoot;
-        
+
+    // =========================================================
+    // BARK UI
+    // =========================================================
+
     [Header("NPC Bark UI")]
     [SerializeField] private string npcDisplayName = "NPC";
-    [TextArea][SerializeField] private string[] barkLines = { "Hi", "What's up?", "Watchout!" };
 
-    [Header("Wykrywanie mierzenia (Aggressive/Fighter)")]
+    [TextArea]
+    [SerializeField] private string[] barkLines = { "Hi", "What's up?", "Watch out!" };
+
+    // =========================================================
+    // AIM / AGGRO DETECTION
+    // =========================================================
+
+    [Header("Aim Detection")]
     [SerializeField] private float aimAngleThreshold = 15f;
 
-    [Header("Aiming – czułość")]
+    [Header("Aiming Sensitivity")]
     [SerializeField] private bool requireADSForAggro = true;
     [SerializeField, Range(2f, 25f)] private float strictAimAngle = 8f;
 
-    [Header("Natychmiastowa reakcja")]
+    [Header("Instant Aggro Reaction")]
     [SerializeField] private bool instantAggroOnAim = true;
     [SerializeField] private float aimMaxDistance = 50f;
     [SerializeField] private float quickDrawAggroWindow = 0.25f;
     [SerializeField] private float minAimHoldTime = 0.10f;
 
-    [Header("LOS – warstwy, które BLOKUJĄ wzrok (świat)")]
-    [SerializeField] private LayerMask losObstaclesMask = ~0;
+    [Header("Line Of Sight")]
+    [SerializeField] private bool autoSuggestLosMask = true;
+    [SerializeField] private LayerMask losObstaclesMask;
 
-    [Header("Reakcja świadka")]
+    [Header("Witness Reaction")]
     [SerializeField] private float witnessRadius = 25f;
 
-    // runtime
+    // =========================================================
+    // OPTIMIZATION
+    // =========================================================
+
+    [Header("Optimization")]
+    [SerializeField] private float activeGunRefreshInterval = 0.15f;
+
+    // =========================================================
+    // CACHED REFERENCES
+    // =========================================================
+
     private Transform player;
     private Camera playerCam;
-    private WeaponManager wm;
-    private NPCController npcCtrl;
+    private WeaponManager weaponManager;
+    private NPCController npcController;
+    private NPCMelee npcMelee;
     private NpcBarkUI barkUI;
     private NavMeshAgent agent;
-    private bool agentStoppedBeforeInteraction;
-    private bool agentWasSuspendedForInteraction;
+
+    // =========================================================
+    // RUNTIME STATE
+    // =========================================================
 
     private Renderer[] bodyRenderers;
     private MaterialPropertyBlock mpb;
+
     private Color defaultColor = Color.white;
     private Quaternion originalRotation;
 
-    private float lastSeenTime = -999f;
-    private float interactFaceUntil = -1f;
-    private bool sessionActive = false;
+    private bool sessionActive;
+    private bool playerInsideTrigger;
 
-    // aim tracking
+    private bool agentStoppedBeforeInteraction;
+    private bool agentWasSuspendedForInteraction;
+
     private bool lastHands = true;
     private int lastSlot = -1;
+
+    private float turnVelocity;
+    private float lastSeenTime = -999f;
+    private float interactFaceUntil = -1f;
     private float lastSwitchTime = -999f;
     private float aimOnMeSince = -1f;
+    private float nextBarkTime;
+    private float nextNearbyBarkTime;
+    private float nextActiveGunRefreshTime;
 
-    // bark timing
-    private float nextBarkTime = 0f;
-    private float nextNearbyBarkTime = 0f;
-    private bool playerInsideTrigger = false;
+    private Gun cachedActivePlayerGun;
 
     private static readonly int BaseColorID = Shader.PropertyToID("_BaseColor");
     private static readonly int ColorID = Shader.PropertyToID("_Color");
 
     private bool InteractPressedThisFrame =>
-        PlayerInputHandler.Instance != null && PlayerInputHandler.Instance.InteractPressed;
+        PlayerInputHandler.Instance != null &&
+        PlayerInputHandler.Instance.InteractPressed;
+
+    // =========================================================
+    // UNITY
+    // =========================================================
 
     private void OnEnable()
     {
@@ -109,182 +153,198 @@ public class NPCReactive : MonoBehaviour
     private void OnDisable()
     {
         NPCController.OnNPCDied -= OnNpcDiedGlobal;
+        ResumeAgentAfterInteraction();
     }
 
     private void Awake()
     {
-        npcCtrl = GetComponent<NPCController>();
+        npcController = GetComponent<NPCController>();
+        npcMelee = GetComponent<NPCMelee>();
         agent = GetComponent<NavMeshAgent>();
-    }
-
-    private void Start()
-    {
-        player = GameObject.FindGameObjectWithTag("Player")?.transform;
-        playerCam = Camera.main;
-        wm = FindFirstObjectByType<WeaponManager>();
-        barkUI = FindFirstObjectByType<NpcBarkUI>(FindObjectsInactive.Include);
-
-        if (wm != null)
-        {
-            lastHands = wm.IsUsingHandsOnly();
-            lastSlot = wm.GetCurrentWeaponIndex();
-        }
-
-        RefreshBodyRenderers();
-
-        if (npcCtrl != null) defaultColor = npcCtrl.DefaultColor;
-        else if (bodyRenderers.Length > 0 && bodyRenderers[0] != null)
-        {
-            var mat = bodyRenderers[0].sharedMaterial ?? bodyRenderers[0].material;
-            if (mat != null)
-            {
-                if (mat.HasProperty(BaseColorID)) defaultColor = mat.GetColor(BaseColorID);
-                else if (mat.HasProperty(ColorID)) defaultColor = mat.GetColor(ColorID);
-                else defaultColor = mat.color;
-            }
-        }
 
         mpb = new MaterialPropertyBlock();
         originalRotation = transform.rotation;
 
-        if (npcCtrl == null)
-            ApplyBodyColor(defaultColor);
-        else
-            npcCtrl.RecomputeBaseColor();
+        RefreshBodyRenderers();
+    }
 
-        if (losObstaclesMask == 0)
-            losObstaclesMask = SuggestObstacleMask();
+    private void Start()
+    {
+        ResolveSceneRefs();
+        ResolveCamera();
+
+        if (weaponManager != null)
+        {
+            lastHands = weaponManager.IsUsingHandsOnly();
+            lastSlot = weaponManager.GetCurrentWeaponIndex();
+        }
+
+        if (npcController != null)
+        {
+            defaultColor = npcController.DefaultColor;
+            npcController.RecomputeBaseColor();
+        }
+        else
+        {
+            defaultColor = ReadDefaultRendererColor();
+            ApplyBodyColor(defaultColor);
+        }
+
+        EnsureLosMask();
+        ScheduleNextNearbyBark();
     }
 
     private void Update()
     {
-        if (DevConsole.IsOpen) return;
-        if (player == null) return;
+        if (DevConsole.IsOpen)
+            return;
 
-        if (npcCtrl != null && (npcCtrl.IsDead || npcCtrl.IsProvoked || npcCtrl.IsInteractionLocked || npcCtrl.IsScaredVisible))
+        ResolveMissingRuntimeRefs();
+
+        if (player == null)
+            return;
+
+        if (IsInteractionBlockedByNpcState())
         {
-            sessionActive = false;
-            ResumeAgentAfterInteraction();
-        }
-
-        if (wm == null) wm = FindFirstObjectByType<WeaponManager>();
-        if (wm != null)
-        {
-            bool handsNow = wm.IsUsingHandsOnly();
-            int slotNow = wm.GetCurrentWeaponIndex();
-
-            if (lastHands && !handsNow && slotNow >= 0 && slotNow <= 3)
-                lastSwitchTime = Time.time;
-
-            lastHands = handsNow;
-            lastSlot = slotNow;
-        }
-
-        // reakcja na mierzenie
-        if (npcCtrl != null &&
-            !npcCtrl.IsDead &&
-            !npcCtrl.IsProvoked &&
-            ShouldAggroOnAim() &&
-            PlayerIsAimingAtMe())
-        {
-            npcCtrl.ForceReactToAggression();
-            sessionActive = false;
+            StopInteractionSession(restoreColor: true);
             return;
         }
 
-        // NPC specjalny: interakcja po E
-        if (CanInteract())
-        {
-            float distToPlayer = Vector3.Distance(player.position, transform.position);
-            if (distToPlayer <= interactRadius && InteractPressedThisFrame && Time.time >= nextBarkTime)
-            {
-                StartInteraction();
-                nextBarkTime = Time.time + barkCooldown;
-                nextNearbyBarkTime = Time.time + Random.Range(repeatBarkIntervalRange.x, repeatBarkIntervalRange.y);
-            }
-        }
+        TrackWeaponSwitch();
 
-        // zwykły NPC: opcjonalne powtarzanie barku gdy gracz stoi obok
-        if (!useKeyInteraction && repeatBarkWhileNearby && playerInsideTrigger && CanInteract())
-        {
-            if (Time.time >= nextNearbyBarkTime)
-            {
-                StartInteraction();
-                nextBarkTime = Time.time + barkCooldown;
-                nextNearbyBarkTime = Time.time + Random.Range(repeatBarkIntervalRange.x, repeatBarkIntervalRange.y);
-            }
-        }
+        if (TryReactToPlayerAim())
+            return;
 
-        // sesja interakcji
-        if (sessionActive)
-        {
-            float dist = Vector3.Distance(player.position, transform.position);
-            if (dist <= detectionRadius) lastSeenTime = Time.time;
-
-            bool burst = Time.time <= interactFaceUntil;
-            bool linger = (Time.time - lastSeenTime) <= lingerTime;
-
-            if (burst || linger)
-            {
-                RotateTowardsDeg(player.position, burst ? interactTurnSpeed : idleTurnSpeed);
-            }
-            else
-            {
-                ReturnToDefaultRotationDeg(returnTurnSpeed);
-                ApplyBodyColor(defaultColor);
-                sessionActive = false;
-                ResumeAgentAfterInteraction();
-            }
-        }
+        HandleKeyInteraction();
+        HandleRepeatBark();
+        UpdateInteractionSession();
     }
+
+#if UNITY_EDITOR
+    private void OnValidate()
+    {
+        interactRadius = Mathf.Max(0.1f, interactRadius);
+        detectionRadius = Mathf.Max(interactRadius, detectionRadius);
+        lingerTime = Mathf.Max(0f, lingerTime);
+        interactFaceDuration = Mathf.Max(0f, interactFaceDuration);
+        barkCooldown = Mathf.Max(0f, barkCooldown);
+        aimMaxDistance = Mathf.Max(1f, aimMaxDistance);
+        activeGunRefreshInterval = Mathf.Max(0.02f, activeGunRefreshInterval);
+
+        if (repeatBarkIntervalRange.x < 0f)
+            repeatBarkIntervalRange.x = 0f;
+
+        if (repeatBarkIntervalRange.y < repeatBarkIntervalRange.x)
+            repeatBarkIntervalRange.y = repeatBarkIntervalRange.x;
+    }
+#endif
+
+    // =========================================================
+    // TRIGGERS
+    // =========================================================
 
     private void OnTriggerEnter(Collider other)
     {
-        if (!barkOnTriggerEnter) return;
-        if (!other.CompareTag("Player")) return;
+        if (!other.CompareTag("Player"))
+            return;
 
         playerInsideTrigger = true;
 
-        if (!CanAutoBarkNow()) return;
+        if (!barkOnTriggerEnter)
+            return;
+
+        if (!CanAutoBarkNow())
+            return;
 
         StartInteraction();
-        nextBarkTime = Time.time + barkCooldown;
-        nextNearbyBarkTime = Time.time + Random.Range(repeatBarkIntervalRange.x, repeatBarkIntervalRange.y);
+        ScheduleBarkCooldowns();
     }
 
     private void OnTriggerExit(Collider other)
     {
-        if (!other.CompareTag("Player")) return;
+        if (!other.CompareTag("Player"))
+            return;
+
         playerInsideTrigger = false;
     }
 
-    // =========================
-    // INTERAKCJA
-    // =========================
+    // =========================================================
+    // INTERACTION
+    // =========================================================
+
+    private void HandleKeyInteraction()
+    {
+        if (!useKeyInteraction)
+            return;
+
+        if (!CanInteract())
+            return;
+
+        if (Time.time < nextBarkTime)
+            return;
+
+        float distToPlayer = Vector3.Distance(player.position, transform.position);
+
+        if (distToPlayer > interactRadius)
+            return;
+
+        if (!InteractPressedThisFrame)
+            return;
+
+        StartInteraction();
+        ScheduleBarkCooldowns();
+    }
+
+    private void HandleRepeatBark()
+    {
+        if (useKeyInteraction)
+            return;
+
+        if (!repeatBarkWhileNearby)
+            return;
+
+        if (!playerInsideTrigger)
+            return;
+
+        if (!CanInteract())
+            return;
+
+        if (Time.time < nextNearbyBarkTime)
+            return;
+
+        StartInteraction();
+        ScheduleBarkCooldowns();
+    }
+
     private bool CanInteract()
     {
-        NPCMelee melee = GetComponent<NPCMelee>();
-
-        if (melee != null)
+        if (npcMelee != null)
         {
-            if (melee.IsDead) return false;
-            if (melee.IsAggro) return false;
+            if (npcMelee.IsDead)
+                return false;
+
+            if (npcMelee.IsAggro)
+                return false;
         }
 
-        if (npcCtrl == null) return true;
+        if (npcController == null)
+            return true;
 
-        if (npcCtrl.IsDead) return false;
-        if (npcCtrl.IsProvoked) return false;
-        if (npcCtrl.IsInteractionLocked) return false;
-        if (npcCtrl.IsScaredVisible) return false;
-
-        // Aggressive/Fighter nie powinien odpalać zwykłego dialogu w trakcie walki.
-        var type = npcCtrl.GetReactionType();
-
-        if (type == NPCController.NPCReactionType.Aggressive)
+        if (npcController.IsDead)
             return false;
 
-        if (type == NPCController.NPCReactionType.Fighter && npcCtrl.IsProvoked)
+        if (npcController.IsProvoked)
+            return false;
+
+        if (npcController.IsInteractionLocked)
+            return false;
+
+        if (npcController.IsScaredVisible)
+            return false;
+
+        NPCController.NPCReactionType type = npcController.GetReactionType();
+
+        if (type == NPCController.NPCReactionType.Aggressive)
             return false;
 
         return true;
@@ -292,29 +352,25 @@ public class NPCReactive : MonoBehaviour
 
     private bool CanAutoBarkNow()
     {
-        if (!CanInteract()) return false;
-        if (Time.time < nextBarkTime) return false;
-        return true;
+        if (!CanInteract())
+            return false;
+
+        return Time.time >= nextBarkTime;
     }
 
     private void StartInteraction()
     {
-        if (!CanInteract()) return;
+        if (!CanInteract())
+            return;
 
-        if (player == null)
-        {
-            GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
-            if (playerGo != null)
-                player = playerGo.transform;
-        }
+        ResolveMissingRuntimeRefs();
 
         if (player == null)
             return;
 
-        string line = GetRandomBark();
-
         sessionActive = true;
         turnVelocity = 0f;
+
         SuspendAgentForInteraction();
 
         interactFaceUntil = Time.time + interactFaceDuration;
@@ -323,17 +379,28 @@ public class NPCReactive : MonoBehaviour
         ApplyBodyColor(interactColor);
         RotateTowardsDeg(player.position, interactTurnSpeed);
 
-        if (barkUI == null)
-            barkUI = FindFirstObjectByType<NpcBarkUI>(FindObjectsInactive.Include);
+        ShowBark();
+    }
+
+    private void ShowBark()
+    {
+        string line = GetRandomBark();
+
+        if (barkUI == null && NPCSceneRefs.Instance != null)
+            barkUI = NPCSceneRefs.Instance.BarkUI;
 
         if (barkUI != null)
+        {
             barkUI.ShowBark(
                 string.IsNullOrWhiteSpace(npcDisplayName) ? gameObject.name : npcDisplayName,
                 line,
                 2.25f
             );
+        }
         else
+        {
             Debug.Log(line);
+        }
     }
 
     private string GetRandomBark()
@@ -344,194 +411,67 @@ public class NPCReactive : MonoBehaviour
         return barkLines[Random.Range(0, barkLines.Length)];
     }
 
-    // =========================
-    // AGGRO ON AIM
-    // =========================
-    private bool ShouldAggroOnAim()
+    private void ScheduleBarkCooldowns()
     {
-        if (npcCtrl == null) return false;
-
-        var type = npcCtrl.GetReactionType();
-        return type == NPCController.NPCReactionType.Aggressive
-            || type == NPCController.NPCReactionType.Fighter;
+        nextBarkTime = Time.time + barkCooldown;
+        ScheduleNextNearbyBark();
     }
 
-    private bool PlayerIsAimingAtMe()
+    private void ScheduleNextNearbyBark()
     {
-        if (playerCam == null || wm == null) return false;
+        float min = Mathf.Max(0f, repeatBarkIntervalRange.x);
+        float max = Mathf.Max(min, repeatBarkIntervalRange.y);
 
-        if (wm.IsUsingHandsOnly())
-        {
-            aimOnMeSince = -1f;
-            return false;
-        }
-
-        int slot = wm.GetCurrentWeaponIndex();
-        if (slot < 0 || slot > 3)
-        {
-            aimOnMeSince = -1f;
-            return false;
-        }
-
-        bool adsHeld = PlayerInputHandler.Instance?.FireAltHeld ?? false;
-        bool fireHeld = PlayerInputHandler.Instance?.FireHeld ?? false;
-
-        bool isFighter = npcCtrl != null && npcCtrl.GetReactionType() == NPCController.NPCReactionType.Fighter;
-        bool requireAdsNow = !isFighter && requireADSForAggro;
-
-        bool scoped = false;
-        if (slot == 1 || slot == 2)
-        {
-            var guns = player != null ? player.GetComponentsInChildren<Gun>(true) : null;
-            var activeGun = guns?.FirstOrDefault(g => g && g.gameObject.activeInHierarchy && !g.isControlledByNPC);
-            scoped = activeGun != null && activeGun.IsScoped();
-        }
-
-        bool aimingInput = slot switch
-        {
-            0 => adsHeld,
-            1 => (adsHeld || scoped),
-            2 => (adsHeld || scoped),
-            3 => (fireHeld || adsHeld),
-            _ => false
-        };
-
-        bool inQuickDrawWindow = Time.time - lastSwitchTime <= quickDrawAggroWindow;
-
-        if (!isFighter)
-        {
-            if (requireAdsNow && !aimingInput && !inQuickDrawWindow)
-            {
-                aimOnMeSince = -1f;
-                return false;
-            }
-        }
-
-        Vector3 camPos = playerCam.transform.position;
-        Vector3 aimPoint = transform.position + Vector3.up * 1.4f;
-        Vector3 toTarget = (aimPoint - camPos).normalized;
-
-        float angle = Vector3.Angle(playerCam.transform.forward, toTarget);
-        float angleGate = Mathf.Min(aimAngleThreshold, strictAimAngle);
-
-        if (angle > angleGate)
-        {
-            aimOnMeSince = -1f;
-            return false;
-        }
-
-        if (Physics.Raycast(camPos, playerCam.transform.forward, out RaycastHit hit, aimMaxDistance, ~0, QueryTriggerInteraction.Ignore))
-        {
-            if (!hit.collider.transform.IsChildOf(transform))
-            {
-                aimOnMeSince = -1f;
-                return false;
-            }
-        }
-        else
-        {
-            aimOnMeSince = -1f;
-            return false;
-        }
-
-        if (!HasLineOfSight(aimPoint))
-        {
-            aimOnMeSince = -1f;
-            return false;
-        }
-
-        if (instantAggroOnAim)
-            return true;
-
-        if (aimOnMeSince < 0f)
-            aimOnMeSince = Time.time;
-
-        return (Time.time - aimOnMeSince) >= minAimHoldTime;
+        nextNearbyBarkTime = Time.time + Random.Range(min, max);
     }
 
-    private bool HasLineOfSight(Vector3 targetPoint)
+    // =========================================================
+    // INTERACTION SESSION / ROTATION
+    // =========================================================
+
+    private void UpdateInteractionSession()
     {
-        if (playerCam == null) return false;
+        if (!sessionActive)
+            return;
 
-        Vector3 origin = playerCam.transform.position;
-        Vector3 dir = targetPoint - origin;
-        float dist = dir.magnitude;
-
-        if (dist <= 0.001f) return false;
-
-        if (Physics.Raycast(origin, dir.normalized, out RaycastHit hit, dist, losObstaclesMask, QueryTriggerInteraction.Ignore))
-            return false;
-
-        return true;
-    }
-
-    // =========================
-    // ŚWIADEK ŚMIERCI
-    // =========================
-    private void OnNpcDiedGlobal(NPCController deadNpc, string attackerName)
-    {
-        if (deadNpc == null || deadNpc == npcCtrl) return;
-        if (npcCtrl == null || npcCtrl.IsDead) return;
-
-        float dist = Vector3.Distance(transform.position, deadNpc.transform.position);
-        if (dist > witnessRadius) return;
-
-        if (npcCtrl.GetReactionType() == NPCController.NPCReactionType.Coward)
+        if (player == null)
         {
-            sessionActive = false;
+            StopInteractionSession(restoreColor: true);
             return;
         }
 
-        Vector3 witnessEye = transform.position + Vector3.up * 1.6f;
-        Vector3 eventPoint = deadNpc.transform.position + Vector3.up * 1.0f;
-        Vector3 dir = eventPoint - witnessEye;
-        float distToEvent = dir.magnitude;
+        float dist = Vector3.Distance(player.position, transform.position);
 
-        if (distToEvent > 0.01f)
+        if (dist <= detectionRadius)
+            lastSeenTime = Time.time;
+
+        bool burst = Time.time <= interactFaceUntil;
+        bool linger = Time.time - lastSeenTime <= lingerTime;
+
+        if (burst || linger)
         {
-            if (!Physics.Raycast(witnessEye, dir.normalized, distToEvent, losObstaclesMask, QueryTriggerInteraction.Ignore))
-            {
-                npcCtrl.ForceReactToAggression();
-                sessionActive = false;
-            }
+            RotateTowardsDeg(player.position, burst ? interactTurnSpeed : idleTurnSpeed);
+            return;
         }
+
+        ReturnToDefaultRotationDeg(returnTurnSpeed);
+
+        if (Quaternion.Angle(transform.rotation, originalRotation) <= 1.0f)
+            StopInteractionSession(restoreColor: true);
     }
 
-    // =========================
-    // WIZUAL / OBRÓT
-    // =========================
-    private void RefreshBodyRenderers()
+    private void StopInteractionSession(bool restoreColor)
     {
-        var all = GetComponentsInChildren<Renderer>(true);
+        if (!sessionActive && !agentWasSuspendedForInteraction)
+            return;
 
-        if (bodyRoot != null)
-            bodyRenderers = all.Where(r => r != null && r.transform.IsChildOf(bodyRoot)).ToArray();
-        else
-            bodyRenderers = all.Where(r => r != null).ToArray();
-    }
+        sessionActive = false;
+        turnVelocity = 0f;
 
-    private void ApplyBodyColor(Color c)
-    {
-        if (mpb == null) mpb = new MaterialPropertyBlock();
-        if (bodyRenderers == null || bodyRenderers.Length == 0) return;
+        if (restoreColor)
+            ApplyBodyColor(defaultColor);
 
-        foreach (var r in bodyRenderers)
-        {
-            if (!r) continue;
-
-            r.GetPropertyBlock(mpb);
-            mpb.SetColor(BaseColorID, c);
-            mpb.SetColor(ColorID, c);
-            r.SetPropertyBlock(mpb);
-
-            var mat = Application.isPlaying ? r.material : r.sharedMaterial;
-            if (mat != null)
-            {
-                if (mat.HasProperty(BaseColorID)) mat.SetColor(BaseColorID, c);
-                else if (mat.HasProperty(ColorID)) mat.SetColor(ColorID, c);
-                else mat.color = c;
-            }
-        }
+        ResumeAgentAfterInteraction();
     }
 
     private void RotateTowardsDeg(Vector3 worldPos, float speedDeg)
@@ -551,6 +491,7 @@ public class NPCReactive : MonoBehaviour
                 targetRot,
                 speedDeg * Time.deltaTime
             );
+
             return;
         }
 
@@ -582,6 +523,7 @@ public class NPCReactive : MonoBehaviour
                 originalRotation,
                 speedDeg * Time.deltaTime
             );
+
             return;
         }
 
@@ -600,11 +542,368 @@ public class NPCReactive : MonoBehaviour
         transform.rotation = Quaternion.Euler(0f, newY, 0f);
     }
 
-    private LayerMask SuggestObstacleMask()
+    // =========================================================
+    // AGGRO ON AIM
+    // =========================================================
+
+    private bool TryReactToPlayerAim()
     {
-        int mask = LayerMask.GetMask("Default", "Obstacle", "Car");
-        return mask == 0 ? ~0 : mask;
+        if (npcController == null)
+            return false;
+
+        if (npcController.IsDead || npcController.IsProvoked)
+            return false;
+
+        if (!ShouldAggroOnAim())
+            return false;
+
+        if (!PlayerIsAimingAtMe())
+            return false;
+
+        npcController.ForceReactToAggression();
+        StopInteractionSession(restoreColor: true);
+
+        return true;
     }
+
+    private bool ShouldAggroOnAim()
+    {
+        if (npcController == null)
+            return false;
+
+        NPCController.NPCReactionType type = npcController.GetReactionType();
+
+        return type == NPCController.NPCReactionType.Aggressive ||
+               type == NPCController.NPCReactionType.Fighter;
+    }
+
+    private bool PlayerIsAimingAtMe()
+    {
+        if (playerCam == null || weaponManager == null)
+            return false;
+
+        if (weaponManager.IsUsingHandsOnly())
+        {
+            aimOnMeSince = -1f;
+            return false;
+        }
+
+        int slot = weaponManager.GetCurrentWeaponIndex();
+
+        if (slot < 0 || slot > 3)
+        {
+            aimOnMeSince = -1f;
+            return false;
+        }
+
+        bool adsHeld = PlayerInputHandler.Instance?.FireAltHeld ?? false;
+        bool fireHeld = PlayerInputHandler.Instance?.FireHeld ?? false;
+
+        bool isFighter =
+            npcController != null &&
+            npcController.GetReactionType() == NPCController.NPCReactionType.Fighter;
+
+        bool scoped = false;
+
+        if (slot == 1 || slot == 2)
+        {
+            Gun activeGun = GetCachedActivePlayerGun();
+            scoped = activeGun != null && activeGun.IsScoped();
+        }
+
+        bool aimingInput = slot switch
+        {
+            0 => adsHeld,
+            1 => adsHeld || scoped,
+            2 => adsHeld || scoped,
+            3 => fireHeld || adsHeld,
+            _ => false
+        };
+
+        bool inQuickDrawWindow = Time.time - lastSwitchTime <= quickDrawAggroWindow;
+
+        if (!isFighter && requireADSForAggro && !aimingInput && !inQuickDrawWindow)
+        {
+            aimOnMeSince = -1f;
+            return false;
+        }
+
+        Vector3 camPos = playerCam.transform.position;
+        Vector3 aimPoint = transform.position + Vector3.up * 1.4f;
+        Vector3 toTarget = aimPoint - camPos;
+
+        if (toTarget.sqrMagnitude <= 0.001f)
+        {
+            aimOnMeSince = -1f;
+            return false;
+        }
+
+        float angle = Vector3.Angle(playerCam.transform.forward, toTarget.normalized);
+        float angleGate = Mathf.Min(aimAngleThreshold, strictAimAngle);
+
+        if (angle > angleGate)
+        {
+            aimOnMeSince = -1f;
+            return false;
+        }
+
+        if (!CameraRayHitsThisNpc())
+        {
+            aimOnMeSince = -1f;
+            return false;
+        }
+
+        if (!HasLineOfSightToAimPoint(aimPoint))
+        {
+            aimOnMeSince = -1f;
+            return false;
+        }
+
+        if (instantAggroOnAim)
+            return true;
+
+        if (aimOnMeSince < 0f)
+            aimOnMeSince = Time.time;
+
+        return Time.time - aimOnMeSince >= minAimHoldTime;
+    }
+
+    private bool CameraRayHitsThisNpc()
+    {
+        Vector3 origin = playerCam.transform.position;
+        Vector3 direction = playerCam.transform.forward;
+
+        if (!Physics.Raycast(origin, direction, out RaycastHit hit, aimMaxDistance, ~0, QueryTriggerInteraction.Ignore))
+            return false;
+
+        return hit.collider != null &&
+               hit.collider.transform != null &&
+               hit.collider.transform.IsChildOf(transform);
+    }
+
+    private bool HasLineOfSightToAimPoint(Vector3 aimPoint)
+    {
+        if (playerCam == null)
+            return false;
+
+        Vector3 origin = playerCam.transform.position;
+        Vector3 dir = aimPoint - origin;
+
+        float dist = dir.magnitude;
+
+        if (dist <= 0.001f)
+            return false;
+
+        int npcMask = LayerMask.GetMask("NPC");
+        int mask = losObstaclesMask.value & ~npcMask;
+
+        if (mask == 0)
+            return true;
+
+        if (Physics.Raycast(origin, dir.normalized, out RaycastHit hit, dist, mask, QueryTriggerInteraction.Ignore))
+        {
+            if (hit.collider != null && hit.collider.transform.IsChildOf(transform))
+                return true;
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private Gun GetCachedActivePlayerGun()
+    {
+        if (player == null)
+            return null;
+
+        if (Time.time < nextActiveGunRefreshTime)
+            return cachedActivePlayerGun;
+
+        nextActiveGunRefreshTime = Time.time + activeGunRefreshInterval;
+        cachedActivePlayerGun = null;
+
+        Gun[] guns = player.GetComponentsInChildren<Gun>(true);
+
+        for (int i = 0; i < guns.Length; i++)
+        {
+            Gun gun = guns[i];
+
+            if (gun == null)
+                continue;
+
+            if (!gun.gameObject.activeInHierarchy)
+                continue;
+
+            if (gun.isControlledByNPC)
+                continue;
+
+            cachedActivePlayerGun = gun;
+            break;
+        }
+
+        return cachedActivePlayerGun;
+    }
+
+    private void TrackWeaponSwitch()
+    {
+        if (weaponManager == null)
+            return;
+
+        bool handsNow = weaponManager.IsUsingHandsOnly();
+        int slotNow = weaponManager.GetCurrentWeaponIndex();
+
+        if (lastHands && !handsNow && slotNow >= 0 && slotNow <= 3)
+            lastSwitchTime = Time.time;
+
+        lastHands = handsNow;
+        lastSlot = slotNow;
+    }
+
+    // =========================================================
+    // WITNESS REACTION
+    // =========================================================
+
+    private void OnNpcDiedGlobal(NPCController deadNpc, string attackerName)
+    {
+        if (deadNpc == null)
+            return;
+
+        if (deadNpc == npcController)
+            return;
+
+        if (npcController == null || npcController.IsDead)
+            return;
+
+        if (npcController.GetReactionType() == NPCController.NPCReactionType.Coward)
+        {
+            StopInteractionSession(restoreColor: true);
+            return;
+        }
+
+        float dist = Vector3.Distance(transform.position, deadNpc.transform.position);
+
+        if (dist > witnessRadius)
+            return;
+
+        Vector3 witnessEye = transform.position + Vector3.up * 1.6f;
+        Vector3 eventPoint = deadNpc.transform.position + Vector3.up;
+        Vector3 dir = eventPoint - witnessEye;
+
+        float eventDistance = dir.magnitude;
+
+        if (eventDistance <= 0.01f)
+            return;
+
+        int npcMask = LayerMask.GetMask("NPC");
+        int mask = losObstaclesMask.value & ~npcMask;
+
+        if (Physics.Raycast(witnessEye, dir.normalized, out RaycastHit hit, eventDistance, mask, QueryTriggerInteraction.Ignore))
+        {
+            if (hit.collider != null && !hit.collider.transform.IsChildOf(deadNpc.transform))
+                return;
+        }
+
+        npcController.ForceReactToAggression();
+        StopInteractionSession(restoreColor: true);
+    }
+
+    // =========================================================
+    // VISUALS
+    // =========================================================
+
+    private void RefreshBodyRenderers()
+    {
+        Renderer[] all = GetComponentsInChildren<Renderer>(true);
+
+        if (all == null || all.Length == 0)
+        {
+            bodyRenderers = System.Array.Empty<Renderer>();
+            return;
+        }
+
+        int count = 0;
+
+        for (int i = 0; i < all.Length; i++)
+        {
+            Renderer r = all[i];
+
+            if (r == null)
+                continue;
+
+            if (bodyRoot != null && !r.transform.IsChildOf(bodyRoot))
+                continue;
+
+            count++;
+        }
+
+        bodyRenderers = new Renderer[count];
+
+        int index = 0;
+
+        for (int i = 0; i < all.Length; i++)
+        {
+            Renderer r = all[i];
+
+            if (r == null)
+                continue;
+
+            if (bodyRoot != null && !r.transform.IsChildOf(bodyRoot))
+                continue;
+
+            bodyRenderers[index] = r;
+            index++;
+        }
+    }
+
+    private Color ReadDefaultRendererColor()
+    {
+        if (bodyRenderers == null || bodyRenderers.Length == 0)
+            return Color.white;
+
+        Renderer renderer = bodyRenderers[0];
+
+        if (renderer == null)
+            return Color.white;
+
+        Material mat = renderer.sharedMaterial;
+
+        if (mat == null)
+            return Color.white;
+
+        if (mat.HasProperty(BaseColorID))
+            return mat.GetColor(BaseColorID);
+
+        if (mat.HasProperty(ColorID))
+            return mat.GetColor(ColorID);
+
+        return mat.color;
+    }
+
+    private void ApplyBodyColor(Color color)
+    {
+        if (mpb == null)
+            mpb = new MaterialPropertyBlock();
+
+        if (bodyRenderers == null || bodyRenderers.Length == 0)
+            return;
+
+        for (int i = 0; i < bodyRenderers.Length; i++)
+        {
+            Renderer renderer = bodyRenderers[i];
+
+            if (renderer == null)
+                continue;
+
+            renderer.GetPropertyBlock(mpb);
+            mpb.SetColor(BaseColorID, color);
+            mpb.SetColor(ColorID, color);
+            renderer.SetPropertyBlock(mpb);
+        }
+    }
+
+    // =========================================================
+    // AGENT
+    // =========================================================
 
     private void SuspendAgentForInteraction()
     {
@@ -615,8 +914,10 @@ public class NPCReactive : MonoBehaviour
             return;
 
         agentStoppedBeforeInteraction = agent.isStopped;
+
         agent.isStopped = true;
         agent.ResetPath();
+
         agentWasSuspendedForInteraction = true;
     }
 
@@ -632,6 +933,92 @@ public class NPCReactive : MonoBehaviour
         agentWasSuspendedForInteraction = false;
     }
 
+    // =========================================================
+    // REFS / STATE
+    // =========================================================
+
+    private void ResolveSceneRefs()
+    {
+        NPCSceneRefs refs = NPCSceneRefs.Instance;
+
+        if (refs != null)
+        {
+            if (player == null)
+                player = refs.Player;
+
+            if (weaponManager == null)
+                weaponManager = refs.WeaponManager;
+
+            if (barkUI == null)
+                barkUI = refs.BarkUI;
+        }
+
+        if (player == null)
+        {
+            GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
+
+            if (playerGo != null)
+                player = playerGo.transform;
+        }
+    }
+
+    private void ResolveMissingRuntimeRefs()
+    {
+        if (player == null || weaponManager == null || barkUI == null)
+            ResolveSceneRefs();
+
+        if (playerCam == null)
+            ResolveCamera();
+    }
+
+    private void ResolveCamera()
+    {
+        if (playerCam == null)
+            playerCam = Camera.main;
+    }
+
+    private bool IsInteractionBlockedByNpcState()
+    {
+        if (npcMelee != null)
+        {
+            if (npcMelee.IsDead || npcMelee.IsAggro)
+                return true;
+        }
+
+        if (npcController == null)
+            return false;
+
+        return npcController.IsDead ||
+               npcController.IsProvoked ||
+               npcController.IsInteractionLocked ||
+               npcController.IsScaredVisible;
+    }
+
+    private void EnsureLosMask()
+    {
+        if (!autoSuggestLosMask)
+            return;
+
+        if (losObstaclesMask.value != 0 && losObstaclesMask.value != ~0)
+            return;
+
+        losObstaclesMask = SuggestObstacleMask();
+    }
+
+    private LayerMask SuggestObstacleMask()
+    {
+        int mask = LayerMask.GetMask("Default", "Obstacle", "Car", "Environment", "Building");
+
+        if (mask == 0)
+            mask = LayerMask.GetMask("Default", "Obstacle", "Car");
+
+        return mask == 0 ? 0 : mask;
+    }
+
+    // =========================================================
+    // PROFILE
+    // =========================================================
+
     public void ApplyProfile(NPCProfile profile)
     {
         if (profile == null)
@@ -641,7 +1028,6 @@ public class NPCReactive : MonoBehaviour
             ? gameObject.name
             : profile.displayName;
 
-        // Dla NPC bez interakcji wyłączamy auto barki.
         if (!profile.allowReactiveInteraction)
         {
             barkOnTriggerEnter = false;
@@ -649,7 +1035,6 @@ public class NPCReactive : MonoBehaviour
             repeatBarkWhileNearby = false;
         }
 
-        // Story / BankEmployee najczęściej powinny być na E, nie auto-trigger.
         if (profile.archetype == NPCProfile.NPCArchetype.Story ||
             profile.archetype == NPCProfile.NPCArchetype.BankEmployee)
         {
@@ -658,7 +1043,6 @@ public class NPCReactive : MonoBehaviour
             repeatBarkWhileNearby = false;
         }
 
-        // Zwykły ambient może mieć automatyczny bark.
         if (profile.archetype == NPCProfile.NPCArchetype.Civilian)
         {
             useKeyInteraction = false;

@@ -1,14 +1,19 @@
 using System;
+using System.Collections;
 using UnityEngine;
 
 public class NPCCore : MonoBehaviour
 {
     public enum NPCImportance
     {
-        Ambient,        // zwyk³y NPC / przechodzieñ
-        Mission,        // wa¿ny dla misji, mo¿e dostaæ obra¿enia, ale nie powinien zgin¹æ
-        StoryCritical   // fabularny, ca³kowicie odporny
+        Ambient,        // Standard NPC
+        Mission,        // Mission NPC - wont die
+        StoryCritical   // Critical NPC - wont die
     }
+
+    [Header("World Coordinator")]
+    [SerializeField] private bool autoRegisterInWorldCoordinator = true;
+    [SerializeField] private bool autoUnregisterFromWorldCoordinator = true;
 
     [Header("Identity")]
     [SerializeField] private string npcId;
@@ -22,11 +27,28 @@ public class NPCCore : MonoBehaviour
     [Header("Damage Rules")]
     [SerializeField] private bool invulnerable = false;
 
-    [Tooltip("NPC mo¿e otrzymaæ obra¿enia, ale nie spadnie poni¿ej 1 HP.")]
+    [Header("Hit Feedback")]
+    [SerializeField] private bool useCoreHitColorFeedback = true;
+
+    [Tooltip("If FALSE, this NPC will not flash red when damaged.")]
+    [SerializeField] private bool allowHitColorFeedback = true;
+
+    [SerializeField] private Renderer[] bodyRenderers;
+    [SerializeField] private float hitFlashDuration = 0.25f;
+    [SerializeField] private Color hitColor = Color.red;
+    [SerializeField] private Color fallbackBaseColor = Color.white;
+
+    [Tooltip("NPC can take damage but cannot die.")]
     [SerializeField] private bool preventDeath = false;
 
     [Header("Runtime")]
     [SerializeField] private bool isDead = false;
+
+    private MaterialPropertyBlock mpb;
+    private Coroutine hitFlashCoroutine;
+
+    private static readonly int BaseColorID = Shader.PropertyToID("_BaseColor");
+    private static readonly int ColorID = Shader.PropertyToID("_Color");
 
     public string NpcId => npcId;
     public string DisplayName => displayName;
@@ -35,6 +57,11 @@ public class NPCCore : MonoBehaviour
     public float MaxHP => maxHP;
     public float CurrentHP => currentHP;
     public bool IsDead => isDead;
+    public bool AllowsCoreHitFeedback =>
+        useCoreHitColorFeedback &&
+        allowHitColorFeedback &&
+        importance == NPCImportance.Ambient &&
+        !IsInvulnerable;
 
     public bool IsInvulnerable =>
         invulnerable || importance == NPCImportance.StoryCritical;
@@ -52,6 +79,20 @@ public class NPCCore : MonoBehaviour
             npcId = gameObject.name;
 
         currentHP = Mathf.Clamp(currentHP <= 0f ? maxHP : currentHP, 0f, maxHP);
+        mpb = new MaterialPropertyBlock();
+        RefreshBodyRenderersIfNeeded();
+    }
+
+    private void Start()
+    {
+        if (autoRegisterInWorldCoordinator && NPCWorldCoordinator.Instance != null)
+            NPCWorldCoordinator.Instance.RegisterNPC(gameObject);
+    }
+
+    private void OnDestroy()
+    {
+        if (autoUnregisterFromWorldCoordinator && NPCWorldCoordinator.Instance != null)
+            NPCWorldCoordinator.Instance.UnregisterNPC(gameObject);
     }
 
     public void ApplyProfile(NPCProfile profile)
@@ -112,6 +153,7 @@ public class NPCCore : MonoBehaviour
                 result.wouldDie = false;
                 result.preventedDeath = true;
 
+                PlayCoreHitColorFeedback();
                 Damaged?.Invoke(this, attackerName, result.damageApplied);
                 return result;
             }
@@ -122,6 +164,7 @@ public class NPCCore : MonoBehaviour
             result.currentHP = currentHP;
             result.wouldDie = true;
 
+            PlayCoreHitColorFeedback();
             Damaged?.Invoke(this, attackerName, result.damageApplied);
             DeathRequested?.Invoke(this, attackerName);
 
@@ -132,17 +175,81 @@ public class NPCCore : MonoBehaviour
         result.currentHP = currentHP;
         result.wouldDie = false;
 
+        PlayCoreHitColorFeedback();
         Damaged?.Invoke(this, attackerName, result.damageApplied);
 
         return result;
     }
 
+    public void PlayCoreHitColorFeedback()
+    {
+        if (!AllowsCoreHitFeedback)
+            return;
+
+        if (bodyRenderers == null || bodyRenderers.Length == 0)
+            return;
+
+        if (hitFlashCoroutine != null)
+            StopCoroutine(hitFlashCoroutine);
+
+        hitFlashCoroutine = StartCoroutine(CoreHitFlashRoutine());
+    }
+
+    public void ApplyCoreBodyColor(Color color)
+    {
+        if (bodyRenderers == null || bodyRenderers.Length == 0)
+            return;
+
+        if (mpb == null)
+            mpb = new MaterialPropertyBlock();
+
+        for (int i = 0; i < bodyRenderers.Length; i++)
+        {
+            Renderer renderer = bodyRenderers[i];
+
+            if (renderer == null)
+                continue;
+
+            renderer.GetPropertyBlock(mpb);
+            mpb.SetColor(BaseColorID, color);
+            mpb.SetColor(ColorID, color);
+            renderer.SetPropertyBlock(mpb);
+        }
+    }
+
+    private IEnumerator CoreHitFlashRoutine()
+    {
+        ApplyCoreBodyColor(hitColor);
+
+        yield return new WaitForSeconds(hitFlashDuration);
+
+        if (!isDead)
+            ApplyCoreBodyColor(fallbackBaseColor);
+
+        hitFlashCoroutine = null;
+    }
+
+    private void RefreshBodyRenderersIfNeeded()
+    {
+        if (bodyRenderers != null && bodyRenderers.Length > 0)
+            return;
+
+        bodyRenderers = GetComponentsInChildren<Renderer>(true);
+    }
+
     public void ConfirmDeath(string attackerName)
     {
-        if (isDead) return;
+        if (isDead)
+            return;
 
         isDead = true;
         currentHP = 0f;
+
+        if (hitFlashCoroutine != null)
+        {
+            StopCoroutine(hitFlashCoroutine);
+            hitFlashCoroutine = null;
+        }
 
         Died?.Invoke(this, attackerName);
     }

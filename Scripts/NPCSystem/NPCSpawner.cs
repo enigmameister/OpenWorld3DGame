@@ -12,56 +12,91 @@ public class NPCSpawner : MonoBehaviour
         Melee
     }
 
+    // =========================================================
+    // PREFABS
+    // =========================================================
+
     [Header("NPC Prefabs")]
     [SerializeField] private GameObject[] civilianPrefabs;
     [SerializeField] private GameObject[] fighterPrefabs;
     [SerializeField] private GameObject[] aggressivePrefabs;
     [SerializeField] private GameObject[] meleePrefabs;
 
+    // =========================================================
+    // LIMITS
+    // =========================================================
+
     [Header("Local Limit")]
     [SerializeField] private int maxNPCs = 20;
 
-    [Header("Rozmieszczenie")]
+    // =========================================================
+    // SPAWN AREA
+    // =========================================================
+
+    [Header("Spawn Area")]
     [SerializeField] private float spawnRadius = 30f;
     [SerializeField] private float minDistanceBetweenNPCs = 2.0f;
     [SerializeField] private float minDistanceToPlayer = 8.0f;
 
-    [Header("Warstwy / NavMesh")]
+    // =========================================================
+    // NAVMESH / LAYERS
+    // =========================================================
+
+    [Header("Layers / NavMesh")]
     [SerializeField] private LayerMask npcLayer;
     [SerializeField] private float navmeshMaxSampleDist = 6f;
     [SerializeField] private int maxSpawnPointAttempts = 20;
 
-    [Header("Szanse typów")]
+    // =========================================================
+    // SPAWN CHANCES
+    // =========================================================
+
+    [Header("Spawn Chances")]
     [Range(0f, 1f)][SerializeField] private float fighterChance = 0.25f;
     [Range(0f, 1f)][SerializeField] private float aggressiveChance = 0.20f;
     [Range(0f, 1f)][SerializeField] private float meleeChance = 0.15f;
 
-    [Header("Czêstotliwoœæ spawnowania")]
+    // =========================================================
+    // SPAWN RATE
+    // =========================================================
+
+    [Header("Spawn Rate")]
     [SerializeField] private Vector2 spawnDelayRange = new Vector2(5f, 10f);
 
-    [Header("Refs")]
+    // =========================================================
+    // REFERENCES
+    // =========================================================
+
+    [Header("References")]
     [SerializeField] private Transform npcParent;
     [SerializeField] private Transform player;
+
+    // =========================================================
+    // DEBUG
+    // =========================================================
 
     [Header("Debug")]
     [SerializeField] private bool debugLogs = false;
 
+    // =========================================================
+    // RUNTIME STATE
+    // =========================================================
+
     private readonly List<GameObject> npcs = new();
+
+    private readonly Collider[] nearbyNpcBuffer = new Collider[16];
 
     private float timer;
     private float nextSpawnDelay;
 
+    // =========================================================
+    // UNITY LIFECYCLE
+    // =========================================================
+
     private void Start()
     {
-        if (npcParent == null)
-            npcParent = GameObject.Find("NPCContainer")?.transform;
-
-        if (player == null)
-        {
-            GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
-            if (playerGo != null)
-                player = playerGo.transform;
-        }
+        ResolveNpcParent();
+        ResolvePlayerRef();
 
         HideAllPrefabWarnings();
         ScheduleNextSpawn();
@@ -69,55 +104,79 @@ public class NPCSpawner : MonoBehaviour
 
     private void Update()
     {
-        CleanupLocalList();
+        if (!CanTickSpawner())
+            return;
 
+        TickCleanup();
+        TickSpawn();
+    }
+
+    // =========================================================
+    // MAIN TICK
+    // =========================================================
+
+    private bool CanTickSpawner()
+    {
+        if (player == null)
+            ResolvePlayerRef();
+
+        return player != null;
+    }
+
+    private void TickCleanup()
+    {
+        CleanupLocalList();
+    }
+
+    private void TickSpawn()
+    {
         timer += Time.deltaTime;
 
         if (timer < nextSpawnDelay)
             return;
 
+        TrySpawnOneNPC();
+        ScheduleNextSpawn();
+    }
+
+    private void TrySpawnOneNPC()
+    {
         if (npcs.Count >= maxNPCs)
-        {
-            ScheduleNextSpawn();
             return;
-        }
 
         PlannedSpawnType plannedType = RollSpawnType();
+        GameObject prefab = PickPrefab(plannedType);
 
-        GameObject prefabToSpawn = PickPrefab(plannedType);
-
-        if (prefabToSpawn == null)
+        if (prefab == null)
         {
             if (debugLogs)
-                Debug.LogWarning($"[NPCSpawner] {name}: Brak prefabu dla typu {plannedType}.");
+                Debug.LogWarning($"[NPCSpawner] {name}: Missing prefab for type {plannedType}.");
 
-            ScheduleNextSpawn();
             return;
         }
 
         if (!CanSpawnByGlobalBudget(plannedType))
-        {
-            ScheduleNextSpawn();
             return;
-        }
 
-        if (TryGetValidSpawnPoint(out Vector3 spawnPos))
-        {
-            GameObject npc = Instantiate(prefabToSpawn, spawnPos, Quaternion.identity);
+        if (!TryGetValidSpawnPoint(out Vector3 spawnPoint))
+            return;
 
-            if (npcParent != null)
-                npc.transform.SetParent(npcParent, true);
+        GameObject npc = Instantiate(prefab, spawnPoint, Quaternion.identity);
 
-            NPCWorldCoordinator.Instance?.RegisterNPC(npc);
+        if (npcParent != null)
+            npc.transform.SetParent(npcParent, true);
 
-            npcs.Add(npc);
+        npcs.Add(npc);
 
-            if (debugLogs)
-                Debug.Log($"[NPCSpawner] Spawned {plannedType}: {npc.name}");
-        }
+        NPCWorldCoordinator.Instance?.RegisterNPC(npc);
 
-        ScheduleNextSpawn();
+        if (debugLogs)
+            Debug.Log($"[NPCSpawner] Spawned {plannedType}: {npc.name}");
     }
+
+    // =========================================================
+    // SPAWN TYPE / PREFAB SELECTION
+    // =========================================================
 
     private PlannedSpawnType RollSpawnType()
     {
@@ -134,15 +193,15 @@ public class NPCSpawner : MonoBehaviour
             aggressive /= totalSpecial;
         }
 
-        float r = Random.value;
+        float roll = Random.value;
 
-        if (r < melee)
+        if (roll < melee)
             return PlannedSpawnType.Melee;
 
-        if (r < melee + fighter)
+        if (roll < melee + fighter)
             return PlannedSpawnType.Fighter;
 
-        if (r < melee + fighter + aggressive)
+        if (roll < melee + fighter + aggressive)
             return PlannedSpawnType.Aggressive;
 
         return PlannedSpawnType.Civilian;
@@ -152,101 +211,87 @@ public class NPCSpawner : MonoBehaviour
     {
         switch (type)
         {
-            case PlannedSpawnType.Civilian:
-                return PickRandom(civilianPrefabs);
-
             case PlannedSpawnType.Fighter:
-                return PickRandom(fighterPrefabs);
+                return PickFromArray(fighterPrefabs);
 
             case PlannedSpawnType.Aggressive:
-                return PickRandom(aggressivePrefabs);
+                return PickFromArray(aggressivePrefabs);
 
             case PlannedSpawnType.Melee:
-                return PickRandom(meleePrefabs);
+                return PickFromArray(meleePrefabs);
 
+            case PlannedSpawnType.Civilian:
             default:
-                return null;
+                return PickFromArray(civilianPrefabs);
         }
     }
 
-    private GameObject PickRandom(GameObject[] prefabs)
+    private GameObject PickFromArray(GameObject[] prefabs)
     {
         if (prefabs == null || prefabs.Length == 0)
             return null;
 
-        List<GameObject> valid = null;
+        int startIndex = Random.Range(0, prefabs.Length);
 
         for (int i = 0; i < prefabs.Length; i++)
         {
-            if (prefabs[i] == null)
-                continue;
+            int index = (startIndex + i) % prefabs.Length;
+            GameObject prefab = prefabs[index];
 
-            valid ??= new List<GameObject>();
-            valid.Add(prefabs[i]);
+            if (prefab != null)
+                return prefab;
         }
 
-        if (valid == null || valid.Count == 0)
-            return null;
-
-        return valid[Random.Range(0, valid.Count)];
+        return null;
     }
+
+    // =========================================================
+    // GLOBAL BUDGET
+    // =========================================================
 
     private bool CanSpawnByGlobalBudget(PlannedSpawnType type)
     {
-        if (NPCWorldCoordinator.Instance == null)
+        NPCWorldCoordinator coordinator = NPCWorldCoordinator.Instance;
+
+        if (coordinator == null)
             return true;
 
-        bool isCombat =
-            type == PlannedSpawnType.Fighter ||
-            type == PlannedSpawnType.Aggressive ||
-            type == PlannedSpawnType.Melee;
+        if (IsCombatSpawnType(type))
+            return coordinator.CanSpawnCombatNPC();
 
-        if (isCombat)
-            return NPCWorldCoordinator.Instance.CanSpawnCombatNPC();
-
-        return NPCWorldCoordinator.Instance.CanSpawnAmbientNPC();
+        return coordinator.CanSpawnAmbientNPC();
     }
 
-    private void ScheduleNextSpawn()
+    private bool IsCombatSpawnType(PlannedSpawnType type)
     {
-        timer = 0f;
-
-        if (spawnDelayRange.x > spawnDelayRange.y)
-            (spawnDelayRange.x, spawnDelayRange.y) = (spawnDelayRange.y, spawnDelayRange.x);
-
-        nextSpawnDelay = Random.Range(spawnDelayRange.x, spawnDelayRange.y);
+        return type == PlannedSpawnType.Fighter ||
+               type == PlannedSpawnType.Aggressive ||
+               type == PlannedSpawnType.Melee;
     }
 
-    private void CleanupLocalList()
-    {
-        for (int i = npcs.Count - 1; i >= 0; i--)
-        {
-            if (npcs[i] == null)
-                npcs.RemoveAt(i);
-        }
-    }
+    // =========================================================
+    // SPAWN POINT
+    // =========================================================
 
     private bool TryGetValidSpawnPoint(out Vector3 validPos)
     {
         Vector3 playerTargetPos = NPCPlayerTargetUtility.GetTargetPosition(player);
+        float minPlayerSqr = minDistanceToPlayer * minDistanceToPlayer;
 
         for (int i = 0; i < maxSpawnPointAttempts; i++)
         {
             Vector2 circle = Random.insideUnitCircle * spawnRadius;
             Vector3 candidate = transform.position + new Vector3(circle.x, 0f, circle.y);
 
-            if (playerTargetPos != Vector3.zero &&
-                Vector3.Distance(candidate, playerTargetPos) < minDistanceToPlayer)
-            {
+            if ((candidate - playerTargetPos).sqrMagnitude < minPlayerSqr)
                 continue;
-            }
 
             if (!NavMesh.SamplePosition(candidate, out NavMeshHit hit, navmeshMaxSampleDist, NavMesh.AllAreas))
                 continue;
 
             Vector3 navPos = hit.position;
 
-            if (Physics.OverlapSphere(navPos, minDistanceBetweenNPCs, npcLayer, QueryTriggerInteraction.Ignore).Length > 0)
+            if (HasNearbyNPC(navPos))
                 continue;
 
             validPos = navPos;
@@ -262,6 +307,91 @@ public class NPCSpawner : MonoBehaviour
         validPos = transform.position;
         return false;
     }
+
+    private bool HasNearbyNPC(Vector3 position)
+    {
+        if (npcLayer.value == 0)
+            return false;
+
+        int count = Physics.OverlapSphereNonAlloc(
+            position,
+            minDistanceBetweenNPCs,
+            nearbyNpcBuffer,
+            npcLayer,
+            QueryTriggerInteraction.Ignore
+        );
+
+        return count > 0;
+    }
+
+    // =========================================================
+    // CLEANUP / SCHEDULING
+    // =========================================================
+
+    private void CleanupLocalList()
+    {
+        for (int i = npcs.Count - 1; i >= 0; i--)
+        {
+            if (npcs[i] != null)
+                continue;
+
+            npcs.RemoveAt(i);
+        }
+    }
+
+    private void ScheduleNextSpawn()
+    {
+        timer = 0f;
+
+        if (spawnDelayRange.x > spawnDelayRange.y)
+            (spawnDelayRange.x, spawnDelayRange.y) = (spawnDelayRange.y, spawnDelayRange.x);
+
+        float minDelay = Mathf.Max(0.05f, spawnDelayRange.x);
+        float maxDelay = Mathf.Max(minDelay, spawnDelayRange.y);
+
+        nextSpawnDelay = Random.Range(minDelay, maxDelay);
+    }
+
+    // =========================================================
+    // REFERENCES
+    // =========================================================
+
+    private void ResolveNpcParent()
+    {
+        if (npcParent != null)
+            return;
+
+        GameObject container = GameObject.Find("NPCContainer");
+
+        if (container != null)
+            npcParent = container.transform;
+    }
+
+    private bool ResolvePlayerRef()
+    {
+        if (player != null)
+            return true;
+
+        NPCSceneRefs refs = NPCSceneRefs.Instance;
+
+        if (refs != null && refs.HasPlayer())
+        {
+            player = refs.Player;
+            return player != null;
+        }
+
+        GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
+
+        if (playerGo == null)
+            return false;
+
+        player = playerGo.transform;
+        return true;
+    }
+
+    // =========================================================
+    // DEBUG
+    // =========================================================
 
     private void HideAllPrefabWarnings()
     {

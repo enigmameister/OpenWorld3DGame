@@ -34,13 +34,7 @@ public class PuzzleCodeManager : MonoBehaviour
         if (index < 0 || index >= codeDigits.Length)
             return;
 
-        if (codeDigits[index] != -1)
-        {
-            Debug.LogWarning($"🔁 Nadpisanie kodu [{index}] = {codeDigits[index]} ➜ {value}");
-        }
-
         codeDigits[index] = Mathf.Clamp(value, 0, 9);
-        Debug.Log($"🔐 Kod[{index}] = {codeDigits[index]}");
     }
 
     public bool IsCodeComplete()
