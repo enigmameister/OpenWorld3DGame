@@ -21,17 +21,11 @@ public class CarInteraction : MonoBehaviour
     public GameObject loadingBarRoot;
     public Image loadingBarFill;
 
-    [Header("Player – Hidden objects")]
-    [SerializeField] private GameObject playerVisualRoot;
-    [SerializeField] private CharacterController playerCC;
-
     private bool isPlayerNearby;
     private bool isInCar;
     private bool isBusy;
 
-    private VehicleDestructible carDestructible;
-    private PlayerStats playerScriptRef;
-    private PlayerMovement playerMovement;
+    private VehicleDestructible carDestructible;    
     private Rigidbody carRb;
 
     public event System.Action OnEnterCar;
@@ -53,18 +47,18 @@ public class CarInteraction : MonoBehaviour
     public Transform VehicleExitPoint =>
         exitPoint != null ? exitPoint : transform;
 
+    private PlayerStats PlayerStatsRef =>
+    occupantController != null ? occupantController.PlayerStats : null;
+
+    private PlayerMovement PlayerMovementRef =>
+        occupantController != null ? occupantController.PlayerMovement : null;
+
     [Header("Race UI")]
     [SerializeField] private GameObject carRaceUiRoot;
     [SerializeField] private CarRaceManager raceManager;
 
     void Start()
     {
-        if (playerObject != null)
-        {
-            playerMovement = playerObject.GetComponent<PlayerMovement>();
-            if (!playerCC) playerCC = playerObject.GetComponent<CharacterController>();
-        }
-
         if (loadingBarRoot != null)
             loadingBarRoot.SetActive(false);
 
@@ -114,10 +108,6 @@ public class CarInteraction : MonoBehaviour
                 seatPosition,
                 exitPoint
             );
-
-            playerMovement = occupantController.PlayerMovement;
-            playerScriptRef = occupantController.PlayerStats;
-            playerCC = occupantController.PlayerCharacterController;
         }
 
         if (carObject != null)
@@ -135,24 +125,13 @@ public class CarInteraction : MonoBehaviour
             }
         }
 
-        if (playerObject != null)
-        {
-            playerScriptRef = playerObject.GetComponent<PlayerStats>();
-        }
-
-        if (!playerVisualRoot && playerObject != null)
-        {
-            var model = playerObject.transform.Find("Model");
-            if (model) playerVisualRoot = model.gameObject;
-        }
-
         if (parkingController != null)
             parkingController.SetParked(true);
     }
 
     void Update()
     {
-        if (playerScriptRef != null && playerScriptRef.IsDead) return;
+        if (PlayerStatsRef != null && PlayerStatsRef.IsDead) return;
         if (isBusy || PlayerInputHandler.Instance == null) return;
         if (InventoryUI.IsInventoryOpen) return;
         if (DevConsole.IsOpen) return;
@@ -179,14 +158,6 @@ public class CarInteraction : MonoBehaviour
         }
     }
 
-    private PlayerStats GetPlayerStats()
-    {
-        if (occupantController != null && occupantController.PlayerStats != null)
-            return occupantController.PlayerStats;
-
-        return playerScriptRef;
-    }
-
     IEnumerator EnterCarRoutine()
     {
         if (carDestructible != null && carDestructible.isPermanentlyDestroyed)
@@ -211,8 +182,8 @@ public class CarInteraction : MonoBehaviour
             controller.enabled = true;
         }
 
-        if (carDestructible != null)
-            carDestructible.AssignPlayerRef(GetPlayerStats());
+        if (carDestructible != null && PlayerStatsRef != null)
+            carDestructible.AssignPlayerRef(PlayerStatsRef);
 
         isInCar = true;
 
@@ -357,8 +328,8 @@ public class CarInteraction : MonoBehaviour
             carRb.WakeUp();
         }
 
-        if (carDestructible != null && playerScriptRef != null)
-            carDestructible.AssignPlayerRef(playerScriptRef);
+        if (carDestructible != null && PlayerStatsRef != null)
+            carDestructible.AssignPlayerRef(PlayerStatsRef);
 
         isInCar = true;
 
