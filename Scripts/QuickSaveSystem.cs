@@ -184,7 +184,10 @@ public class QuickSaveSystem : MonoBehaviour
                 QuickSaveEntity vehicleEntity = currentVehicleRoot.GetComponent<QuickSaveEntity>();
 
                 if (vehicleEntity == null)
+                {
                     vehicleEntity = currentVehicleRoot.gameObject.AddComponent<QuickSaveEntity>();
+                    Debug.LogWarning($"[QuickSave] Vehicle {currentVehicleRoot.name} had no QuickSaveEntity. Runtime one was added, but scene prefab should have a stable QuickSaveEntity.");
+                }
 
                 data.vehicleSaveId = vehicleEntity.SaveId;
 

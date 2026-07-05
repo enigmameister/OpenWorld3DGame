@@ -4,7 +4,18 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public class QuickSaveEntity : MonoBehaviour
 {
+    public enum SaveEntityKind
+    {
+        StableSceneObject,
+        RuntimeNPC,
+        RuntimeClone
+    }
+
+    [Header("Identity")]
     [SerializeField] private string saveId;
+
+    [Header("Rules")]
+    [SerializeField] private SaveEntityKind entityKind = SaveEntityKind.StableSceneObject;
 
     private string runtimeSaveId;
 
@@ -20,15 +31,11 @@ public class QuickSaveEntity : MonoBehaviour
         }
     }
 
+    public SaveEntityKind EntityKind => entityKind;
+
     private void Awake()
     {
-        if (Application.isPlaying && IsNPCEntity())
-        {
-            runtimeSaveId = Guid.NewGuid().ToString("N");
-            return;
-        }
-
-        if (Application.isPlaying && gameObject.name.Contains("(Clone)"))
+        if (Application.isPlaying && ShouldUseRuntimeId())
         {
             runtimeSaveId = Guid.NewGuid().ToString("N");
             return;
@@ -39,12 +46,48 @@ public class QuickSaveEntity : MonoBehaviour
 
     private void Reset()
     {
+        AutoDetectKind();
         EnsureSerializedId();
     }
 
     private void OnValidate()
     {
+        AutoDetectKind();
         EnsureSerializedId();
+    }
+
+    private bool ShouldUseRuntimeId()
+    {
+        if (entityKind == SaveEntityKind.RuntimeNPC)
+            return true;
+
+        if (entityKind == SaveEntityKind.RuntimeClone)
+            return true;
+
+        if (gameObject.name.Contains("(Clone)"))
+            return true;
+
+        return false;
+    }
+
+    private void AutoDetectKind()
+    {
+        if (Application.isPlaying)
+            return;
+
+        if (IsNPCEntity())
+        {
+            entityKind = SaveEntityKind.RuntimeNPC;
+            return;
+        }
+
+        if (gameObject.name.Contains("(Clone)"))
+        {
+            entityKind = SaveEntityKind.RuntimeClone;
+            return;
+        }
+
+        entityKind = SaveEntityKind.StableSceneObject;
     }
 
     private void EnsureSerializedId()
