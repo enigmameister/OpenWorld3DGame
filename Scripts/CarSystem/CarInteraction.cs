@@ -11,6 +11,7 @@ public class CarInteraction : MonoBehaviour
     [SerializeField] private VehicleOccupantController occupantController;
     [SerializeField] private VehicleStateBridge stateBridge;
     [SerializeField] private VehicleDriveController driveController;
+    [SerializeField] private VehicleRaceBridge raceBridge;
 
     [Header("References")]
     public Transform seatPosition;
@@ -54,16 +55,8 @@ public class CarInteraction : MonoBehaviour
 
     public Transform VehicleExitPoint =>
         exitPoint != null ? exitPoint : transform;
-
     private PlayerStats PlayerStatsRef =>
-    occupantController != null ? occupantController.PlayerStats : null;
-
-    private PlayerMovement PlayerMovementRef =>
-        occupantController != null ? occupantController.PlayerMovement : null;
-
-    [Header("Race UI")]
-    [SerializeField] private GameObject carRaceUiRoot;
-    [SerializeField] private CarRaceManager raceManager;
+        occupantController != null ? occupantController.PlayerStats : null;
 
     void Start()
     {
@@ -147,6 +140,17 @@ public class CarInteraction : MonoBehaviour
 
         if (parkingController != null)
             parkingController.SetParked(true);
+
+        if (raceBridge == null)
+        {
+            raceBridge = GetComponent<VehicleRaceBridge>();
+
+            if (raceBridge == null)
+                Debug.LogWarning($"[CarInteraction] Missing VehicleRaceBridge on {name}");
+        }
+
+        if (raceBridge != null)
+            raceBridge.SetContext();
     }
 
     void Update()
@@ -164,7 +168,7 @@ public class CarInteraction : MonoBehaviour
             }
             else if (isInCar)
             {
-                if (CarRaceManager.AnyRaceBusy)
+                if (raceBridge != null && raceBridge.BlocksVehicleExit)
                     return;
 
                 StartCoroutine(ExitCarRoutine());
@@ -213,8 +217,8 @@ public class CarInteraction : MonoBehaviour
         if (hudController != null)
             hudController.OnPlayerEnteredVehicle(controller);
 
-        if (carRaceUiRoot != null)
-            carRaceUiRoot.SetActive(false);
+        if (raceBridge != null)
+            raceBridge.OnPlayerEnteredVehicle();
 
         isBusy = false;
 
@@ -229,31 +233,13 @@ public class CarInteraction : MonoBehaviour
         isBusy = true;
         yield return StartCoroutine(ShowLoadingBar(0.25f));
 
-        if (raceManager != null && raceManager.raceActive && !raceManager.raceFinished)
-        {
-            raceManager.ResetRace();
-        }
+        if (raceBridge != null)
+            raceBridge.OnPlayerExitedVehicle();
 
         if (driveController != null)
             driveController.DisablePlayerControl();
 
         isInCar = false;
-
-        VehicleFacade vehicleFacade = carObject != null
-            ? carObject.GetComponent<VehicleFacade>()
-            : GetComponent<VehicleFacade>();
-
-        if (vehicleFacade != null)
-        {
-            QuickSaveSystem.Instance?.SetCurrentVehicle(vehicleFacade, false);
-        }
-        else
-        {
-            QuickSaveSystem.Instance?.SetCurrentVehicle(
-                carObject != null ? carObject.transform : transform,
-                false
-            );
-        }
 
         if (occupantController != null)
             occupantController.ExitVehicle();
@@ -304,10 +290,6 @@ public class CarInteraction : MonoBehaviour
 
         isInCar = true;
 
-        VehicleFacade vehicleFacade = carObject != null
-            ? carObject.GetComponent<VehicleFacade>()
-            : GetComponent<VehicleFacade>();
-
         if (occupantController != null)
             occupantController.RestoreInsideVehicleFromLoad();
 
@@ -318,10 +300,10 @@ public class CarInteraction : MonoBehaviour
             PlayerGUI.SetActive(true);
 
         if (hudController != null)
-            hudController.OnPlayerRestoredInsideVehicle(controller); 
+            hudController.OnPlayerRestoredInsideVehicle(controller);
 
-        if (carRaceUiRoot != null)
-            carRaceUiRoot.SetActive(false);
+        if (raceBridge != null)
+            raceBridge.OnPlayerRestoredInsideVehicle();
 
         if (stateBridge != null)
             stateBridge.NotifyPlayerRestoredInsideFromLoad();
