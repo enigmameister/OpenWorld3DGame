@@ -56,10 +56,10 @@ public class VehicleCameraController : MonoBehaviour
 
     public void SetContext(
         GameObject vehicleObject,
-        GameObject carCameraRootObject,
-        GameObject playerCameraObject,
-        GameObject[] cameraPoints,
-        Camera activeCamera)
+        GameObject carCameraRootObject = null,
+        GameObject playerCameraObject = null,
+        GameObject[] cameraPoints = null,
+        Camera activeCamera = null)
     {
         if (vehicleObject != null)
             carObject = vehicleObject;

@@ -11,8 +11,6 @@ public class CarInteraction : MonoBehaviour
 
     [Header("References")]
     public Transform seatPosition;
-    public GameObject carCamera;
-    public GameObject playerCamera;
     public GameObject playerObject;
     public GameObject carObject;
     public GameObject PlayerGUI;
@@ -22,25 +20,9 @@ public class CarInteraction : MonoBehaviour
     public GameObject loadingBarRoot;
     public Image loadingBarFill;
 
-    [Header("Car Cams")]
-    public GameObject[] carCameras;
-    public Camera activeCarCamera;
-    public float cameraLerpSpeed = 5f;
-
     [Header("Player – Hidden objects")]
     [SerializeField] private GameObject playerVisualRoot;
     [SerializeField] private CharacterController playerCC;
-
-    [Header("Freelock (orbit)")]
-    public KeyCode freelockToggleKey = KeyCode.Mouse1;
-    public float orbitYawSpeed = 180f;
-    public float orbitPitchSpeed = 120f;
-    public Vector2 orbitPitchLimits = new Vector2(-10f, 65f);
-    public float orbitMinDistance = 2.5f;
-    public float orbitMaxDistance = 8f;
-    public float orbitZoomSpeed = 2.0f;
-    public float orbitTargetHeight = 1.3f;
-    public float orbitSmooth = 12f;
 
     private bool isPlayerNearby;
     private bool isInCar;
@@ -49,17 +31,7 @@ public class CarInteraction : MonoBehaviour
     private VehicleDestructible carDestructible;
     private PlayerStats playerScriptRef;
     private PlayerMovement playerMovement;
-
-    private int currentCameraIndex = 0;
-    private Transform currentCameraTarget;
-
     private Rigidbody carRb;
-
-    private bool _useFreelock = false;
-    private bool _freelockJustLatched = false;
-    private float _orbitYaw;
-    private float _orbitPitch;
-    private float _orbitDist;
 
     public event System.Action OnEnterCar;
     public event System.Action OnExitCar;
@@ -112,13 +84,7 @@ public class CarInteraction : MonoBehaviour
 
         if (cameraController != null)
         {
-            cameraController.SetContext(
-                carObject != null ? carObject : gameObject,
-                carCamera,
-                playerCamera,
-                carCameras,
-                activeCarCamera
-            );
+            cameraController.SetContext(carObject != null ? carObject : gameObject);
         }
         if (parkingController == null)
         {
@@ -157,15 +123,6 @@ public class CarInteraction : MonoBehaviour
             if (model) playerVisualRoot = model.gameObject;
         }
 
-        foreach (var cam in carCameras)
-        {
-            if (cam != null) cam.SetActive(false);
-        }
-
-        if (carCameras != null && carCameras.Length > 0 && carCameras[0] != null)
-            currentCameraTarget = carCameras[0].transform;
-
-        ResetFreelockDefaults();
         if (parkingController != null)
             parkingController.SetParked(true);
     }
@@ -197,26 +154,6 @@ public class CarInteraction : MonoBehaviour
             if (cameraController != null)
                 cameraController.SwitchToNextCamera();
         }
-    }
-
-
-    void SwitchToNextCarCamera()
-    {
-        if (carCameras == null || carCameras.Length == 0)
-            return;
-
-        for (int i = 0; i < carCameras.Length; i++)
-        {
-            currentCameraIndex = (currentCameraIndex + 1) % carCameras.Length;
-
-            if (carCameras[currentCameraIndex] != null)
-            {
-                currentCameraTarget = carCameras[currentCameraIndex].transform;
-                return;
-            }
-        }
-
-        currentCameraTarget = null;
     }
 
     IEnumerator EnterCarRoutine()
@@ -286,29 +223,11 @@ public class CarInteraction : MonoBehaviour
 
         if (cameraController != null)
             cameraController.OnPlayerEnteredVehicle();
-        else
-        {
-            if (carCamera != null) carCamera.SetActive(true);
-            if (playerCamera != null) playerCamera.SetActive(false);
-        }
 
         if (PlayerGUI != null) PlayerGUI.SetActive(true);
 
         if (hudController != null)
             hudController.OnPlayerEnteredVehicle(controller);
-
-        if (cameraController == null && carCameras != null && carCameras.Length > 0)
-        {
-            currentCameraIndex = 0;
-
-            for (int i = 0; i < carCameras.Length; i++)
-            {
-                if (carCameras[i] != null)
-                    carCameras[i].SetActive(i == 0);
-            }
-
-            currentCameraTarget = carCameras[0] != null ? carCameras[0].transform : null;
-        }
 
         if (carRaceUiRoot != null)
             carRaceUiRoot.SetActive(false);
@@ -399,35 +318,11 @@ public class CarInteraction : MonoBehaviour
 
         if (cameraController != null)
             cameraController.OnPlayerExitedVehicle();
-        else
-        {
-            if (carCamera != null) carCamera.SetActive(false);
-            if (playerCamera != null) playerCamera.SetActive(true);
-        }
 
         if (PlayerGUI != null) PlayerGUI.SetActive(true);
 
         if (hudController != null)
             hudController.OnPlayerExitedVehicle();
-
-        if (cameraController == null)
-        {
-            if (carCameras != null)
-            {
-                foreach (var cam in carCameras)
-                {
-                    if (cam != null) cam.SetActive(false);
-                }
-            }
-
-            _useFreelock = false;
-            currentCameraIndex = 0;
-            currentCameraTarget = (carCameras != null && carCameras.Length > 0 && carCameras[0] != null)
-                ? carCameras[0].transform
-                : null;
-
-            ResetFreelockDefaults();
-        }
 
         if (parkingController != null)
             parkingController.SetParked(true);
@@ -489,10 +384,21 @@ public class CarInteraction : MonoBehaviour
         if (playerMovement != null)
             playerMovement.IsInVehicle = true;
 
-        QuickSaveSystem.Instance?.SetCurrentVehicle(
-            carObject != null ? carObject.transform : transform,
-            true
-        );
+        VehicleFacade vehicleFacade = carObject != null
+            ? carObject.GetComponent<VehicleFacade>()
+            : GetComponent<VehicleFacade>();
+
+        if (vehicleFacade != null)
+        {
+            QuickSaveSystem.Instance?.SetCurrentVehicle(vehicleFacade, true);
+        }
+        else
+        {
+            QuickSaveSystem.Instance?.SetCurrentVehicle(
+                carObject != null ? carObject.transform : transform,
+                true
+            );
+        }
 
         if (playerVisualRoot != null)
             playerVisualRoot.SetActive(false);
@@ -510,80 +416,21 @@ public class CarInteraction : MonoBehaviour
 
         if (cameraController != null)
             cameraController.OnPlayerRestoredInsideVehicle();
-        else
-        {
-            if (carCamera != null)
-                carCamera.SetActive(true);
-
-            if (playerCamera != null)
-                playerCamera.SetActive(false);
-        }
 
         if (PlayerGUI != null)
             PlayerGUI.SetActive(true);
 
         if (hudController != null)
-            hudController.OnPlayerRestoredInsideVehicle(controller);
-
-        if (cameraController == null && carCameras != null && carCameras.Length > 0)
-        {
-            currentCameraIndex = 0;
-
-            for (int i = 0; i < carCameras.Length; i++)
-            {
-                if (carCameras[i] != null)
-                    carCameras[i].SetActive(i == 0);
-            }
-
-            currentCameraTarget = carCameras[0] != null ? carCameras[0].transform : null;
-        }
+            hudController.OnPlayerRestoredInsideVehicle(controller); 
 
         if (carRaceUiRoot != null)
             carRaceUiRoot.SetActive(false);
-
-        _useFreelock = false;
-        ResetFreelockDefaults();
 
         if (carObject != null)
             MinimapTargetProvider.Instance?.SetVehicleTarget(carObject.transform);
 
         OnEnterCar?.Invoke();
         OnAnyPlayerEnteredCar?.Invoke(this);
-    }
-
-    void EnableFreelockFromCurrentCamera()
-    {
-        if (activeCarCamera == null || carObject == null) return;
-
-        Vector3 target = carObject.transform.position + Vector3.up * orbitTargetHeight;
-        Vector3 offset = activeCarCamera.transform.position - target;
-
-        _orbitDist = Mathf.Clamp(offset.magnitude, orbitMinDistance, orbitMaxDistance);
-
-        Quaternion look = Quaternion.LookRotation(
-            target - activeCarCamera.transform.position,
-            Vector3.up
-        );
-
-        Vector3 e = look.eulerAngles;
-        _orbitYaw = e.y;
-        _orbitPitch = (e.x > 180f) ? e.x - 360f : e.x;
-
-        _useFreelock = true;
-        _freelockJustLatched = true;
-    }
-
-    void ResetFreelockDefaults()
-    {
-        if (carObject != null)
-            _orbitYaw = carObject.transform.eulerAngles.y;
-        else
-            _orbitYaw = 0f;
-
-        _orbitPitch = Mathf.Clamp(15f, orbitPitchLimits.x, orbitPitchLimits.y);
-        _orbitDist = Mathf.Clamp((orbitMinDistance + orbitMaxDistance) * 0.5f, orbitMinDistance, orbitMaxDistance);
-        _useFreelock = false;
-        _freelockJustLatched = false;
     }
 
     IEnumerator ShowLoadingBar(float duration)
@@ -622,43 +469,12 @@ public class CarInteraction : MonoBehaviour
         if (cameraController != null)
             return cameraController.GetSnapshot();
 
-        return new VehicleCameraSnapshot
-        {
-            cameraIndex = currentCameraIndex,
-
-            useFreelock = _useFreelock,
-            orbitYaw = _orbitYaw,
-            orbitPitch = _orbitPitch,
-            orbitDistance = _orbitDist
-        };
+        return default;
     }
+
     public void ApplyCameraSnapshot(VehicleCameraSnapshot snapshot)
     {
         if (cameraController != null)
-        {
             cameraController.ApplySnapshot(snapshot);
-            return;
-        }
-
-        if (carCameras == null || carCameras.Length == 0)
-            return;
-
-        currentCameraIndex = Mathf.Clamp(snapshot.cameraIndex, 0, carCameras.Length - 1);
-
-        for (int i = 0; i < carCameras.Length; i++)
-        {
-            if (carCameras[i] != null)
-                carCameras[i].SetActive(i == currentCameraIndex);
-        }
-
-        currentCameraTarget = carCameras[currentCameraIndex] != null
-            ? carCameras[currentCameraIndex].transform
-            : null;
-
-        _useFreelock = snapshot.useFreelock;
-        _orbitYaw = snapshot.orbitYaw;
-        _orbitPitch = snapshot.orbitPitch;
-        _orbitDist = Mathf.Clamp(snapshot.orbitDistance, orbitMinDistance, orbitMaxDistance);
-        _freelockJustLatched = true;
     }
 }
