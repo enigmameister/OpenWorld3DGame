@@ -8,6 +8,7 @@ public class CarInteraction : MonoBehaviour
     [SerializeField] private VehicleHudController hudController;
     [SerializeField] private VehicleParkingController parkingController;
     [SerializeField] private VehicleCameraController cameraController;
+    [SerializeField] private VehicleOccupantController occupantController;
 
     [Header("References")]
     public Transform seatPosition;
@@ -97,6 +98,28 @@ public class CarInteraction : MonoBehaviour
         if (parkingController != null)
             parkingController.SetContext(carObject != null ? carObject : gameObject, playerObject);
 
+        if (occupantController == null)
+        {
+            occupantController = GetComponent<VehicleOccupantController>();
+
+            if (occupantController == null)
+                Debug.LogWarning($"[CarInteraction] Missing VehicleOccupantController on {name}");
+        }
+
+        if (occupantController != null)
+        {
+            occupantController.SetContext(
+                carObject != null ? carObject : gameObject,
+                playerObject,
+                seatPosition,
+                exitPoint
+            );
+
+            playerMovement = occupantController.PlayerMovement;
+            playerScriptRef = occupantController.PlayerStats;
+            playerCC = occupantController.PlayerCharacterController;
+        }
+
         if (carObject != null)
         {
             carDestructible = carObject.GetComponent<VehicleDestructible>();
@@ -156,6 +179,14 @@ public class CarInteraction : MonoBehaviour
         }
     }
 
+    private PlayerStats GetPlayerStats()
+    {
+        if (occupantController != null && occupantController.PlayerStats != null)
+            return occupantController.PlayerStats;
+
+        return playerScriptRef;
+    }
+
     IEnumerator EnterCarRoutine()
     {
         if (carDestructible != null && carDestructible.isPermanentlyDestroyed)
@@ -180,16 +211,13 @@ public class CarInteraction : MonoBehaviour
             controller.enabled = true;
         }
 
-        if (carDestructible != null && playerScriptRef != null)
-            carDestructible.AssignPlayerRef(playerScriptRef);
+        if (carDestructible != null)
+            carDestructible.AssignPlayerRef(GetPlayerStats());
 
         isInCar = true;
 
         if (carObject != null)
             ActiveVehicleTransform = carObject.transform;
-
-        if (playerMovement != null)
-            playerMovement.IsInVehicle = true;
 
         VehicleFacade vehicleFacade = carObject != null
             ? carObject.GetComponent<VehicleFacade>()
@@ -207,19 +235,8 @@ public class CarInteraction : MonoBehaviour
             );
         }
 
-        if (playerVisualRoot != null)
-            playerVisualRoot.SetActive(false);
-
-        if (playerCC != null)
-            playerCC.enabled = false;
-
-        if (playerObject != null && seatPosition != null)
-        {
-            playerObject.transform.SetPositionAndRotation(
-                seatPosition.position,
-                seatPosition.rotation
-            );
-        }
+        if (occupantController != null)
+            occupantController.EnterVehicle();
 
         if (cameraController != null)
             cameraController.OnPlayerEnteredVehicle();
@@ -247,9 +264,6 @@ public class CarInteraction : MonoBehaviour
     {
         isBusy = true;
         yield return StartCoroutine(ShowLoadingBar(0.25f));
-
-        if (playerObject != null && !playerObject.activeSelf)
-            playerObject.SetActive(true);
 
         MinimapTargetProvider.Instance?.ClearVehicleTarget();
 
@@ -286,33 +300,8 @@ public class CarInteraction : MonoBehaviour
             );
         }
 
-        if (playerObject != null)
-        {
-            if (exitPoint != null)
-            {
-                playerObject.transform.SetPositionAndRotation(
-                    exitPoint.position,
-                    Quaternion.Euler(0f, exitPoint.eulerAngles.y, 0f)
-                );
-            }
-            else if (carObject != null)
-            {
-                Vector3 exitPos = carObject.transform.position + carObject.transform.right * 2f;
-                playerObject.transform.SetPositionAndRotation(
-                    exitPos,
-                    Quaternion.Euler(0f, carObject.transform.eulerAngles.y, 0f)
-                );
-            }
-        }
-
-        if (playerVisualRoot != null)
-            playerVisualRoot.SetActive(true);
-
-        if (playerCC != null)
-            playerCC.enabled = true;
-
-        if (playerMovement != null)
-            playerMovement.IsInVehicle = false;
+        if (occupantController != null)
+            occupantController.ExitVehicle();
 
         PlayerMovement.IsMovementLocked = false;
 
@@ -378,12 +367,6 @@ public class CarInteraction : MonoBehaviour
 
         ActiveCarInteraction = this;
 
-        if (playerObject != null)
-            playerObject.SetActive(false);
-
-        if (playerMovement != null)
-            playerMovement.IsInVehicle = true;
-
         VehicleFacade vehicleFacade = carObject != null
             ? carObject.GetComponent<VehicleFacade>()
             : GetComponent<VehicleFacade>();
@@ -400,19 +383,8 @@ public class CarInteraction : MonoBehaviour
             );
         }
 
-        if (playerVisualRoot != null)
-            playerVisualRoot.SetActive(false);
-
-        if (playerCC != null)
-            playerCC.enabled = false;
-
-        if (playerObject != null && seatPosition != null)
-        {
-            playerObject.transform.SetPositionAndRotation(
-                seatPosition.position,
-                seatPosition.rotation
-            );
-        }
+        if (occupantController != null)
+            occupantController.RestoreInsideVehicleFromLoad();
 
         if (cameraController != null)
             cameraController.OnPlayerRestoredInsideVehicle();
