@@ -1,0 +1,59 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8b4b16125a20d9c44b4c121f8c09d94d, type: 3}
+  m_Name: Car_Sport_330_Base
+  m_EditorClassIdentifier: Assembly-CSharp::VehicleTuningProfile
+  acceleration: 40
+  reverseAcceleration: 10
+  brakeForce: 20
+  coastDrag: 1.8
+  maxSpeedKPH: 330
+  maxReverseKPH: 28
+  highSpeedAccelFactor: 0.3
+  launchBoostSpeed: 1
+  launchMinThrottle: 0.2
+  steerAtLow: 22
+  steerAtHigh: 4
+  steerResponse: 5.5
+  maxVisualSteerAngle: 22
+  lateralGrip: 4.5
+  yawStability: 2.2
+  extraDownforce: 42
+  highSpeedGripAssist: 1.8
+  lateralVelocityKill: 2.8
+  steeringSpeedLossReducer: 0.2
+  rollStability: 0.25
+  pitchStability: 0.45
+  driftSideGrip: 0.12
+  normalSideGrip: 3.5
+  driftYawAssist: 6
+  driftMinSpeedKmh: 30
+  airControl: 0.05
+  airDownforce: 32
+  nitroForwardForce: 250
+  nitroAccelerationMultiplier: 1.1
+  nitroMaxSpeedBonus: 30
+  maxGear: 6
+  gearSpeedLimits:
+  - 55
+  - 105
+  - 165
+  - 240
+  - 315
+  - 380
+  shiftUpBuffer: 0
+  shiftDownBuffer: 25
+  shiftCooldown: 0.35
+  shiftSpeedDrop: 0.96
+  downshiftBufferKPH: 25
+  maxRPM: 8000
+  rpmSmoothing: 0.12

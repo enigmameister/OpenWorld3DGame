@@ -21,6 +21,7 @@ public class CarInteraction : MonoBehaviour
     public Transform exitPoint;
 
     [Header("UI (interaction)")]
+    [SerializeField] private VehicleInteractionUiProvider interactionUiProvider;
     public GameObject loadingBarRoot;
     public Image loadingBarFill;
 
@@ -47,60 +48,34 @@ public class CarInteraction : MonoBehaviour
     public static CarInteraction ActiveCarInteraction => VehicleStateBridge.ActiveCarInteraction;
 
     public bool IsPlayerInThisCar => isInCar;
-    public Transform VehicleRoot =>
-        carObject != null ? carObject.transform : transform;
+    public Transform VehicleRoot => carObject != null ? carObject.transform : transform;
 
-    public Transform VehicleEnterTarget =>
-        transform;
+    public Transform VehicleEnterTarget => transform;
 
-    public Transform VehicleExitPoint =>
-        exitPoint != null ? exitPoint : transform;
-    private PlayerStats PlayerStatsRef =>
-        occupantController != null ? occupantController.PlayerStats : null;
+    public Transform VehicleExitPoint => exitPoint != null ? exitPoint : transform;
+    private PlayerStats PlayerStatsRef => occupantController != null ? occupantController.PlayerStats : null;
 
     void Start()
     {
-        if (loadingBarRoot != null)
-            loadingBarRoot.SetActive(false);
+        ResolveInteractionUi();
+        ResolvePlayerObject();
 
-        if (hudController == null)
-            hudController = GetComponent<VehicleHudController>();
+        if (loadingBarRoot != null) loadingBarRoot.SetActive(false);
 
-        if (hudController != null)
-            hudController.SetContext(carObject != null ? carObject : gameObject);
+        if (hudController == null) hudController = GetComponentInChildren<VehicleHudController>(true);
 
-        if (cameraController == null)
-        {
-            cameraController = GetComponent<VehicleCameraController>();
+        if (hudController != null) hudController.SetContext(carObject != null ? carObject : gameObject);
 
+        if (cameraController == null) cameraController = GetComponentInChildren<VehicleCameraController>(true);
+        
+        if (cameraController != null) cameraController.SetContext(carObject != null ? carObject : gameObject);
+        
+        if (parkingController == null) parkingController = GetComponentInChildren<VehicleParkingController>(true);
+        
+        if (parkingController != null) parkingController.SetContext(carObject != null ? carObject : gameObject, playerObject);
 
-            if (cameraController == null)
-                Debug.LogWarning($"[CarInteraction] Missing VehicleCameraController on {name}");
-        }
-
-        if (cameraController != null)
-        {
-            cameraController.SetContext(carObject != null ? carObject : gameObject);
-        }
-        if (parkingController == null)
-        {
-            parkingController = GetComponent<VehicleParkingController>();
-
-            if (parkingController == null)
-                Debug.LogWarning($"[CarInteraction] Missing VehicleParkingController on {name}");
-        }
-
-        if (parkingController != null)
-            parkingController.SetContext(carObject != null ? carObject : gameObject, playerObject);
-
-        if (occupantController == null)
-        {
-            occupantController = GetComponent<VehicleOccupantController>();
-
-            if (occupantController == null)
-                Debug.LogWarning($"[CarInteraction] Missing VehicleOccupantController on {name}");
-        }
-
+        if (occupantController == null) occupantController = GetComponentInChildren<VehicleOccupantController>(true);
+        
         if (occupantController != null)
         {
             occupantController.SetContext(
@@ -111,14 +86,8 @@ public class CarInteraction : MonoBehaviour
             );
         }
 
-        if (stateBridge == null)
-        {
-            stateBridge = GetComponent<VehicleStateBridge>();
-
-            if (stateBridge == null)
-                Debug.LogWarning($"[CarInteraction] Missing VehicleStateBridge on {name}");
-        }
-
+        if (stateBridge == null) stateBridge = GetComponentInChildren<VehicleStateBridge>(true);
+        
         if (stateBridge != null)
         {
             stateBridge.SetContext(
@@ -127,30 +96,15 @@ public class CarInteraction : MonoBehaviour
             );
         }
 
-        if (driveController == null)
-        {
-            driveController = GetComponent<VehicleDriveController>();
+        if (driveController == null) driveController = GetComponentInChildren<VehicleDriveController>(true);
+        
+        if (driveController != null) driveController.SetContext(carObject != null ? carObject : gameObject);
 
-            if (driveController == null)
-                Debug.LogWarning($"[CarInteraction] Missing VehicleDriveController on {name}");
-        }
+        if (parkingController != null) parkingController.SetParked(true);
 
-        if (driveController != null)
-            driveController.SetContext(carObject != null ? carObject : gameObject);
+        if (raceBridge == null) raceBridge = GetComponentInChildren<VehicleRaceBridge>(true);
 
-        if (parkingController != null)
-            parkingController.SetParked(true);
-
-        if (raceBridge == null)
-        {
-            raceBridge = GetComponent<VehicleRaceBridge>();
-
-            if (raceBridge == null)
-                Debug.LogWarning($"[CarInteraction] Missing VehicleRaceBridge on {name}");
-        }
-
-        if (raceBridge != null)
-            raceBridge.SetContext();
+        if (raceBridge != null) raceBridge.SetContext();
     }
 
     void Update()
@@ -311,8 +265,43 @@ public class CarInteraction : MonoBehaviour
         OnEnterCar?.Invoke();
     }
 
+    private GameObject ResolvePlayerObject()
+    {
+        if (playerObject != null)
+            return playerObject;
+
+        GameObject foundPlayer = GameObject.FindGameObjectWithTag("Player");
+
+        if (foundPlayer != null)
+            playerObject = foundPlayer;
+
+        return playerObject;
+    }
+
+    private void ResolveInteractionUi()
+    {
+        if (interactionUiProvider == null)
+            interactionUiProvider = VehicleInteractionUiProvider.Instance;
+
+        if (interactionUiProvider == null)
+            interactionUiProvider = FindFirstObjectByType<VehicleInteractionUiProvider>(FindObjectsInactive.Include);
+
+        if (interactionUiProvider == null)
+            return;
+
+        if (loadingBarRoot == null)
+            loadingBarRoot = interactionUiProvider.LoadingBarRoot;
+
+        if (loadingBarFill == null)
+            loadingBarFill = interactionUiProvider.LoadingBarFill;
+
+        interactionUiProvider.Hide();
+    }
+
     IEnumerator ShowLoadingBar(float duration)
     {
+        ResolveInteractionUi();
+
         if (loadingBarRoot == null || loadingBarFill == null)
             yield break;
 
@@ -320,6 +309,7 @@ public class CarInteraction : MonoBehaviour
         loadingBarFill.fillAmount = 0f;
 
         float t = 0f;
+
         while (t < duration)
         {
             t += Time.deltaTime;

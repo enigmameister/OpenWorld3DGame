@@ -22,6 +22,7 @@ public class VehicleFacade : MonoBehaviour
     [SerializeField] private CarInteraction interaction;
     [SerializeField] private NitroSystem nitro;
     [SerializeField] private VehicleDestructible damage;
+    [SerializeField] private VehicleInputController inputController;
 
     [Header("Optional")]
     [SerializeField] private AICarController aiController;
@@ -71,29 +72,23 @@ public class VehicleFacade : MonoBehaviour
 
     private void CacheReferences()
     {
-        if (rb == null)
-            rb = GetComponent<Rigidbody>();
+        if (rb == null) rb = GetComponent<Rigidbody>();
 
-        if (controller == null)
-            controller = GetComponent<CarControll>();
+        if (controller == null) controller = GetComponent<CarControll>();
 
-        if (interaction == null)
-            interaction = GetComponent<CarInteraction>();
+        if (interaction == null) interaction = GetComponentInChildren<CarInteraction>(true);
 
-        if (nitro == null)
-            nitro = GetComponent<NitroSystem>();
+        if (nitro == null) nitro = GetComponent<NitroSystem>();
 
-        if (damage == null)
-            damage = GetComponent<VehicleDestructible>();
+        if (damage == null) damage = GetComponent<VehicleDestructible>();
 
-        if (aiController == null)
-            aiController = GetComponent<AICarController>();
+        if (inputController == null) inputController = GetComponent<VehicleInputController>();
 
-        if (npcImpactDetector == null)
-            npcImpactDetector = GetComponentInChildren<VehicleNpcImpactDetector>(true);
+        if (aiController == null) aiController = GetComponent<AICarController>();
 
-        if (carInfo == null)
-            carInfo = GetComponent<CarInfo>();
+        if (npcImpactDetector == null) npcImpactDetector = GetComponentInChildren<VehicleNpcImpactDetector>(true);
+
+        if (carInfo == null) carInfo = GetComponent<CarInfo>();
     }
 
     private void OnEnable()
@@ -181,6 +176,9 @@ public class VehicleFacade : MonoBehaviour
             controller.useExternalInput = false;
         }
 
+        if (inputController != null)
+            inputController.UseExternalInput = false;
+
         SetMode(controlled ? VehicleMode.PlayerControlled : VehicleMode.Parked);
     }
 
@@ -192,6 +190,9 @@ public class VehicleFacade : MonoBehaviour
             controller.isControlled = controlled;
             controller.useExternalInput = controlled;
         }
+
+        if (inputController != null)
+            inputController.UseExternalInput = controlled;
 
         if (aiController != null)
             aiController.enabled = controlled;
