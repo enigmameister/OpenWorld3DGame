@@ -97,8 +97,12 @@ public class CarInteraction : MonoBehaviour
         }
 
         if (driveController == null) driveController = GetComponentInChildren<VehicleDriveController>(true);
-        
-        if (driveController != null) driveController.SetContext(carObject != null ? carObject : gameObject);
+
+        if (driveController != null)
+        {
+            driveController.SetContext(carObject != null ? carObject : gameObject);
+            driveController.DisableParkedControlIfNotExternal();
+        }
 
         if (parkingController != null) parkingController.SetParked(true);
 

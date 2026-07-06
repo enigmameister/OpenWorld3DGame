@@ -23,6 +23,7 @@ public class VehicleFacade : MonoBehaviour
     [SerializeField] private NitroSystem nitro;
     [SerializeField] private VehicleDestructible damage;
     [SerializeField] private VehicleInputController inputController;
+    [SerializeField] private VehicleHeadlightController headlightController;
 
     [Header("Optional")]
     [SerializeField] private AICarController aiController;
@@ -39,6 +40,7 @@ public class VehicleFacade : MonoBehaviour
     public VehicleDestructible Damage => damage;
     public AICarController AIController => aiController;
     public VehicleNpcImpactDetector NpcImpactDetector => npcImpactDetector;
+    public VehicleHeadlightController Headlights => headlightController;
     public CarInfo Info => carInfo;
 
     public VehicleMode Mode => mode;
@@ -87,6 +89,8 @@ public class VehicleFacade : MonoBehaviour
         if (aiController == null) aiController = GetComponent<AICarController>();
 
         if (npcImpactDetector == null) npcImpactDetector = GetComponentInChildren<VehicleNpcImpactDetector>(true);
+
+        if (headlightController == null) headlightController = GetComponentInChildren<VehicleHeadlightController>(true);
 
         if (carInfo == null) carInfo = GetComponent<CarInfo>();
     }
@@ -259,6 +263,7 @@ public class VehicleFacade : MonoBehaviour
         public bool isReversing;
 
         public VehicleCameraSnapshot camera;
+        public VehicleHeadlightSnapshot headlights;
     }
 
     [System.Serializable]
@@ -293,8 +298,12 @@ public class VehicleFacade : MonoBehaviour
             isReversing = controller != null && controller.isReversing,
 
             camera = interaction != null
-                ? interaction.GetCameraSnapshot()
-                : default
+            ? interaction.GetCameraSnapshot()
+            : default,
+
+                    headlights = headlightController != null
+            ? headlightController.GetSnapshot()
+            : default
         };
     }
 
@@ -318,6 +327,9 @@ public class VehicleFacade : MonoBehaviour
             controller.currentSpeedKPH = Mathf.Max(0, snapshot.currentSpeedKPH);
             controller.isReversing = snapshot.isReversing;
         }
+
+        if (headlightController != null)
+            headlightController.ApplySnapshot(snapshot.headlights);
 
         SetMode(snapshot.mode);
     }
@@ -361,6 +373,9 @@ public class VehicleFacade : MonoBehaviour
             );
 
             interaction.ApplyCameraSnapshot(snapshot.runtime.camera);
+
+            if (headlightController != null)
+                headlightController.ApplySnapshot(snapshot.runtime.headlights);
 
             SetMode(VehicleMode.PlayerControlled);
         }

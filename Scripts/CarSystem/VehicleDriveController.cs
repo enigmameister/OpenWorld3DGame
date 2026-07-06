@@ -87,4 +87,22 @@ public class VehicleDriveController : MonoBehaviour
         return vehicleDestructible != null &&
                vehicleDestructible.isPermanentlyDestroyed;
     }
+
+    public void DisableParkedControlIfNotExternal()
+    {
+        ResolveRefs();
+
+        if (carController == null)
+            return;
+
+        // Jeœli auto jest sterowane przez AI, nie wy³¹czamy.
+        if (carController.useExternalInput)
+            return;
+
+        carController.isControlled = false;
+        carController.enabled = false;
+
+        if (vehicleDestructible != null)
+            vehicleDestructible.AssignPlayerRef(null);
+    }
 }

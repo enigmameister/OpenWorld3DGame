@@ -3,20 +3,22 @@ using System.Collections.Generic;
 
 public class LightController : MonoBehaviour
 {
-    [Header("Czas")]
+    [Header("Time")]
     public DayNightCycle dayNightCycle;
 
-    [Header("Reflektory samochodów")]
+    [Header("Car Headlights")]
     public List<GameObject> vehicleHeadlights = new List<GameObject>();
 
-    [Header("Latarnie uliczne")]
+    [Header("Streetlights")]
     public List<GameObject> streetLights = new List<GameObject>();
 
-    [Header("Godziny aktywacji świateł")]
+    [Header("Lights time range")]
     public int nightStartHour = 20;
     public int nightEndHour = 6;
 
     private bool lightsOn = false;
+
+    public static event System.Action<bool> OnGlobalVehicleLightsChanged;
 
     void Start()
     {
@@ -45,29 +47,27 @@ public class LightController : MonoBehaviour
     {
         lightsOn = state;
 
-        foreach (var lightObj in vehicleHeadlights)
-        {
-            if (lightObj != null)
-            {
-                foreach (var light in lightObj.GetComponentsInChildren<Light>(true))
-                    light.enabled = state;
-            }
-        }
-
         foreach (var streetLight in streetLights)
         {
-            if (streetLight == null) continue;
+            if (streetLight == null)
+                continue;
 
             foreach (var light in streetLight.GetComponentsInChildren<Light>(true))
                 light.enabled = state;
         }
+
+        OnGlobalVehicleLightsChanged?.Invoke(state);
 
         Debug.Log($"💡 Światła {(state ? "WŁĄCZONE" : "WYŁĄCZONE")} (godzina {dayNightCycle.CurrentHour}:00)");
     }
 
     public bool ShouldLightsBeOnNow()
     {
+        if (dayNightCycle == null)
+            return false;
+
         int hour = dayNightCycle.CurrentHour;
+
         return hour >= nightStartHour || hour < nightEndHour;
     }
 
@@ -88,7 +88,6 @@ public class LightController : MonoBehaviour
         if (!vehicleHeadlights.Contains(headlightsRoot))
             vehicleHeadlights.Add(headlightsRoot);
 
-        // Od razu ustaw aktywność świateł zgodnie z aktualnym stanem dnia/nocy
         int hour = dayNightCycle.CurrentHour;
         bool shouldBeOn = hour >= nightStartHour || hour < nightEndHour;
 
