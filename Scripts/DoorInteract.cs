@@ -15,7 +15,6 @@ public class DoorInteract : MonoBehaviour
     public DoorUseZoneRelay backZone;      // trigger od „tyłu”
     public string requiredTag = "Player";
     public bool pressToOpen = false;       // jeśli true – wymagaj wciśnięcia klawisza
-    public KeyCode interactKey = KeyCode.E;
 
     [Header("Zabezpieczenie")]
     [Tooltip("Jeśli zaznaczone – drzwi mogą być blokowane (secured).")]
@@ -70,13 +69,7 @@ public class DoorInteract : MonoBehaviour
                 _autoCloseAt = Time.time + autoCloseDelay;
         }
         else
-        {
-            if (Input.GetKeyDown(interactKey))
-            {
-                if (someoneFront && !someoneBack) SetTarget(-openAngle);
-                else if (someoneBack && !someoneFront) SetTarget(+openAngle);
-            }
-
+        { 
             if (!someoneFront && !someoneBack && _autoCloseAt < 0f)
                 _autoCloseAt = Time.time + autoCloseDelay;
         }
@@ -138,5 +131,19 @@ public class DoorInteract : MonoBehaviour
     {
         if (!hasSecurity) return;
         secured = false;
+    }
+
+    public void TryUseFromPlayer()
+    {
+        if (IsLocked())
+            return;
+
+        bool someoneFront = _frontCount > 0;
+        bool someoneBack = _backCount > 0;
+
+        if (someoneFront && !someoneBack)
+            SetTarget(-openAngle);
+        else if (someoneBack && !someoneFront)
+            SetTarget(+openAngle);
     }
 }

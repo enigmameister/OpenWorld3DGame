@@ -22,9 +22,9 @@ public class PickupInteractor : MonoBehaviour
     [Header("Kamera (opcjonalny override)")]
     public Camera camOverride;
 
-    // wewnętrzne
     private WeaponManager wm;
     private bool IsTPP => CameraSwitcher.Instance != null && CameraSwitcher.Instance.IsTPPActive;
+    private IHoldInteractable currentHoldInteractable;
 
     void Start()
     {
@@ -50,7 +50,6 @@ public class PickupInteractor : MonoBehaviour
 
         if (Physics.Raycast(ray, out RaycastHit hit, currentPickupRange, pickupLayer))
         {
-            // blokada jeśli za przeszkodą (wspólna dla wszystkiego)
             Vector3 origin = ray.origin;
             Vector3 targetPos = hit.point;
             float distance = Vector3.Distance(origin, targetPos);
@@ -65,10 +64,27 @@ public class PickupInteractor : MonoBehaviour
             var pressable = hit.collider.GetComponentInParent<IPressable>();
             if (pressable != null)
             {
-                ShowInteractText(pressable.Label);
+                var promptOverride = hit.collider.GetComponentInParent<IInteractionPromptOverride>();
+                var holdInteractable = hit.collider.GetComponentInParent<IHoldInteractable>();
 
-                if (PlayerInputHandler.Instance.InteractPressedThisFrame)
-                    pressable.Press();
+                string label = holdInteractable != null ? holdInteractable.HoldLabel : pressable.Label;
+
+                if (promptOverride != null && promptOverride.HidePrompt)
+                    HideInteractText();
+                else
+                    ShowPressableText(label);
+
+                if (holdInteractable != null)
+                {
+                    HandleHoldInteractable(holdInteractable);
+                }
+                else
+                {
+                    StopCurrentHold();
+
+                    if (PlayerInputHandler.Instance.InteractPressedThisFrame)
+                        pressable.Press();
+                }
 
                 return;
             }
@@ -90,6 +106,8 @@ public class PickupInteractor : MonoBehaviour
             }
             return;
         }
+
+        StopCurrentHold();
         HideInteractText();
     }
 
@@ -130,11 +148,60 @@ public class PickupInteractor : MonoBehaviour
         interactText.text = string.IsNullOrEmpty(extra) ? baseLine : $"{baseLine}  {extra}";
     }
 
+    void ShowPressableText(string label)
+    {
+        if (interactText == null) return;
 
+        string bindingDisplay = "E";
+
+        if (PlayerInputHandler.Instance != null)
+        {
+            var action = PlayerInputHandler.Instance.playerMap.FindAction("Interact");
+            bindingDisplay = action?.GetBindingDisplayString() ?? "E";
+        }
+
+        interactText.gameObject.SetActive(true);
+        interactText.text = $"[{bindingDisplay}] {label}";
+    }
     void HideInteractText()
     {
         if (interactText == null) return;
         interactText.text = "";
         interactText.gameObject.SetActive(false);
+    }
+
+    private void HandleHoldInteractable(IHoldInteractable holdInteractable)
+    {
+        if (PlayerInputHandler.Instance == null)
+            return;
+
+        if (PlayerInputHandler.Instance.InteractHeld)
+        {
+            if (currentHoldInteractable != holdInteractable)
+            {
+                StopCurrentHold();
+                currentHoldInteractable = holdInteractable;
+                currentHoldInteractable.HoldStarted();
+            }
+
+            if (currentHoldInteractable.CanHoldInteract)
+                currentHoldInteractable.HoldTick(Time.deltaTime);
+            else
+                currentHoldInteractable.HoldTick(Time.deltaTime);
+
+            return;
+        }
+
+        if (currentHoldInteractable == holdInteractable)
+            StopCurrentHold();
+    }
+
+    private void StopCurrentHold()
+    {
+        if (currentHoldInteractable == null)
+            return;
+
+        currentHoldInteractable.HoldEnded();
+        currentHoldInteractable = null;
     }
 }

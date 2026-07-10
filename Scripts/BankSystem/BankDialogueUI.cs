@@ -57,7 +57,6 @@ public class BankDialogueUI : MonoBehaviour
 
     private string _currentLineFull = "";
 
-    // return-token (zostawiłem, bo masz w kodzie)
     private string _returnAfterIdToken;
 
     private bool _sessionIdVerified = false;
@@ -100,14 +99,11 @@ public class BankDialogueUI : MonoBehaviour
             return;
         }
 
-        if (BankUiState.AnyUiOpen)
-            return;
+        bool windowTyping = window != null && window.IsTyping;
 
         bool interactThisFrame =
-            (PlayerInputHandler.Instance != null && PlayerInputHandler.Instance.InteractPressedThisFrame) ||
-            Input.GetKeyDown(KeyCode.E);
-
-        bool windowTyping = window != null && window.IsTyping;
+            PlayerInputHandler.Instance != null &&
+            PlayerInputHandler.Instance.InteractUiPressedThisFrame;
 
         if (_confirmMode != InteractConfirmMode.None && !windowTyping && interactThisFrame)
         {
@@ -157,6 +153,9 @@ public class BankDialogueUI : MonoBehaviour
                 return;
             }
         }
+
+        if (BankUiState.AnyUiOpen)
+            return;
     }
 
     // === Public API ===
@@ -659,7 +658,7 @@ public class BankDialogueUI : MonoBehaviour
             case "WAIT_FOR_ID_CONFIRM":
                 {
                     _confirmMode = InteractConfirmMode.ShowId;
-                    ShowUseIdHint(true, $"Naciśnij [{GetInteractBindingDisplay()}], aby użyć karty ID");
+                    ShowUseIdHint(true, $"Press [{GetInteractBindingDisplay()}], for use ID");
                     return "@hold";
                 }
 
@@ -922,16 +921,11 @@ public class BankDialogueUI : MonoBehaviour
 
     private string GetInteractBindingDisplay()
     {
-        // fallback
-        if (PlayerInputHandler.Instance == null) return "E";
+        if (PlayerInputHandler.Instance == null)
+            return "E";
 
-        // akcja Interact z mapy Player
-        var action = PlayerInputHandler.Instance.playerMap.FindAction("Interact", throwIfNotFound: false);
-        if (action == null) return "E";
-
-        // Najprościej: pierwszy binding (u Ciebie to będzie <Keyboard>/e, dopóki nie zrobisz rebinda)
-        // DisplayString ładnie zwróci np. "E" albo "F" albo "Button South"
-        return action.GetBindingDisplayString();
+        string display = PlayerInputHandler.Instance.GetPlayerBindingDisplay("Interact");
+        return string.IsNullOrWhiteSpace(display) ? "E" : display;
     }
 
     private IEnumerator CoCreateAccountFlowAfterPayment()

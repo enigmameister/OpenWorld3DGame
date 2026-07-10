@@ -1,24 +1,29 @@
 using UnityEngine;
 
 [RequireComponent(typeof(Collider))]
-public class ElevatorCallButton : MonoBehaviour
+public class ElevatorCallButton : MonoBehaviour, IPressable
 {
     public SimpleElevator elevator;
+
     [Tooltip("Jeœli zaznaczone – przycisk wo³a windê na górê. Jeœli odznaczone – na dó³.")]
     public bool callToTop = false;
 
-    [Header("Kolor przycisku (opcjonalnie)")]
+    [Header("Kolor przycisku")]
     public Renderer buttonRenderer;
     public Color idleColor = Color.red;
     public Color activeColor = Color.green;
 
-    private bool _playerInRange = false;
+    [SerializeField] private string topLabel = "Wezwij windê na górê";
+    [SerializeField] private string bottomLabel = "Wezwij windê na dó³";
+
     private bool _isActive = false;
+
+    public string Label => callToTop ? topLabel : bottomLabel;
 
     private void Reset()
     {
         var col = GetComponent<Collider>();
-        if (col) col.isTrigger = true;
+        if (col) col.isTrigger = false;
     }
 
     private void Start()
@@ -27,39 +32,19 @@ public class ElevatorCallButton : MonoBehaviour
             buttonRenderer.material.color = idleColor;
     }
 
-    private void Update()
+    public void Press()
     {
-        if (!_playerInRange) return;
+        if (elevator == null)
+            return;
 
-        var input = PlayerInputHandler.Instance;
-        if (input == null) return;
+        if (callToTop)
+            elevator.CallToTop();
+        else
+            elevator.CallToBottom();
 
-        if (input.InteractPressedThisFrame)
-        {
-            if (elevator != null)
-            {
-                if (callToTop)
-                    elevator.CallToTop();
-                else
-                    elevator.CallToBottom();
+        _isActive = !_isActive;
 
-                _isActive = !_isActive;
-
-                if (buttonRenderer != null)
-                    buttonRenderer.material.color = _isActive ? activeColor : idleColor;
-            }
-        }
-    }
-
-    private void OnTriggerEnter(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            _playerInRange = true;
-    }
-
-    private void OnTriggerExit(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            _playerInRange = false;
+        if (buttonRenderer != null)
+            buttonRenderer.material.color = _isActive ? activeColor : idleColor;
     }
 }

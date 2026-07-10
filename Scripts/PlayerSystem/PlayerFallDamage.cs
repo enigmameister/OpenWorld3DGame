@@ -33,20 +33,29 @@ public class PlayerFallDamage : MonoBehaviour
 
     void Update()
     {
+        PlayerMovement pm = GetComponent<PlayerMovement>();
+        if (pm != null && pm.IsOnLadderPublic)
+        {
+            wasGrounded = false;
+            return;
+        }
+
         bool grounded = controller.isGrounded;
 
-        // start spadania: było na ziemi, teraz nie jest
         if (!grounded && wasGrounded)
         {
             fallStartY = transform.position.y;
             isFalling = true;
         }
 
-
-        // lądowanie po spadaniu
         if (grounded && isFalling)
         {
-            if (GetComponent<PlayerStats>()?.isUnderwater == true) return;
+            if (GetComponent<PlayerStats>()?.isUnderwater == true)
+            {
+                isFalling = false;
+                wasGrounded = grounded;
+                return;
+            }
 
             float fallDistance = Mathf.Max(0f, fallStartY - transform.position.y);
 
@@ -55,21 +64,33 @@ public class PlayerFallDamage : MonoBehaviour
                 float t = Mathf.InverseLerp(minFallHeight, fatalFallHeight, fallDistance);
                 float damage = Mathf.Lerp(0f, maxFallDamage, t);
 
-                // zadaj obrażenia
                 stats?.TakeDamage(Mathf.RoundToInt(damage));
 
-                // 🔻 wskaźnik obrażeń dla upadku – wszystkie kierunki
                 DamageIndicatorUI.Instance?.TriggerFlash(Mathf.RoundToInt(damage), Color.gray);
-                // efekt przechyłu kamery
-                if (impactCamera != null)
-                    impactCamera?.DoTilt();
-                DamageIndicatorUI.Instance?.TriggerAll(damage);
 
+                if (impactCamera != null)
+                    impactCamera.DoTilt();
+
+                DamageIndicatorUI.Instance?.TriggerAll(damage);
             }
 
             isFalling = false;
         }
 
         wasGrounded = grounded;
+    }
+
+    public void ForceStartFallFrom(float startY)
+    {
+        fallStartY = startY;
+        isFalling = true;
+        wasGrounded = false;
+    }
+
+    public void CancelFallTracking()
+    {
+        fallStartY = transform.position.y;
+        isFalling = false;
+        wasGrounded = controller != null && controller.isGrounded;
     }
 }

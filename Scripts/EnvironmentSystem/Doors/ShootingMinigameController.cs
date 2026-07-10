@@ -54,6 +54,12 @@ public class ShootingMinigameController : MonoBehaviour
             countdown3DText.text = ""; // ⬅️ Resetuj 3D tekst
     }
 
+    private bool FirePressedThisFrame()
+    {
+        return PlayerInputHandler.Instance != null &&
+               PlayerInputHandler.Instance.FirePressedThisFrame;
+    }
+
     public bool CanTriggerUI()
     {
         return !isGameRunning && !secondPhaseCompleted;
@@ -121,7 +127,7 @@ public class ShootingMinigameController : MonoBehaviour
 
     IEnumerator WaitForFirstShot()
     {
-        while (!Input.GetButtonDown("Fire1"))
+        while (!FirePressedThisFrame())
             yield return null;
 
         infoBoxGO.SetActive(false);
@@ -194,7 +200,7 @@ public class ShootingMinigameController : MonoBehaviour
 
     IEnumerator WaitForSecondShot()
     {
-        while (!Input.GetButtonDown("Fire1"))
+        while (!FirePressedThisFrame())
             yield return null;
 
         infoBoxGO.SetActive(false);

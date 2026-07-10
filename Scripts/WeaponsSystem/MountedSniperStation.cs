@@ -1,7 +1,7 @@
 ﻿using TMPro;
 using UnityEngine;
 
-public class MountedSniperStation : MonoBehaviour
+public class MountedSniperStation : MonoBehaviour, IPressable
 {
     [Header("Pozycja gracza")]
     public Transform mountPoint;          // PlayerPosition
@@ -46,6 +46,10 @@ public class MountedSniperStation : MonoBehaviour
 
     public bool IsPlayerMounted { get; private set; }
 
+    [SerializeField] private string useLabel = "Użyj stanowiska snajperskiego";
+
+    public string Label => useLabel;
+
     // --- stan wewnętrzny ---
     Transform _playerRoot;
     PlayerMovement _playerMovement;
@@ -70,9 +74,6 @@ public class MountedSniperStation : MonoBehaviour
     bool _ammoTrackingInitialized;
 
     private float mountInputLockUntil;
-
-    private bool playerInTrigger;
-    private Transform cachedPlayerRoot;
 
     [SerializeField] private float mountInputLockTime = 0.35f;
     [SerializeField] private GameObject playerHolstersRoot;
@@ -108,27 +109,17 @@ public class MountedSniperStation : MonoBehaviour
 
     void Update()
     {
-        if (Time.time >= mountInputLockUntil)
+        if (Time.time >= mountInputLockUntil && IsPlayerMounted)
         {
-            bool togglePressed =
-                Input.GetKeyDown(KeyCode.E) ||
-                Input.GetKeyDown(KeyCode.Escape);
+            bool unmountPressed =
+                PlayerInputHandler.Instance != null &&
+                PlayerInputHandler.Instance.InteractUiPressedThisFrame;
 
-            if (togglePressed)
+            if (unmountPressed)
             {
-                if (IsPlayerMounted)
-                {
-                    UnmountPlayer();
-                    mountInputLockUntil = Time.time + mountInputLockTime;
-                    return;
-                }
-
-                if (playerInTrigger && cachedPlayerRoot != null)
-                {
-                    MountPlayer(cachedPlayerRoot);
-                    mountInputLockUntil = Time.time + mountInputLockTime;
-                    return;
-                }
+                UnmountPlayer();
+                mountInputLockUntil = Time.time + mountInputLockTime;
+                return;
             }
         }
 
@@ -136,13 +127,7 @@ public class MountedSniperStation : MonoBehaviour
 
         var input = PlayerInputHandler.Instance;
 
-        Vector2 look = input != null
-            ? input.LookDelta
-            : new Vector2(
-                Input.GetAxisRaw("Mouse X"),
-                Input.GetAxisRaw("Mouse Y")
-            );
-
+        Vector2 look = input != null ? input.LookDelta : Vector2.zero;
 
         // >>> poprawiona oś – mysz w górę => celownik w górę
         _yawOffset += look.x * yawSensitivity;
@@ -215,17 +200,22 @@ public class MountedSniperStation : MonoBehaviour
 
     private void HandleMountedWeaponInput()
     {
-        if (!sniperGun) return;
+        if (!sniperGun)
+            return;
 
         var input = PlayerInputHandler.Instance;
+        if (input == null)
+            return;
 
-        bool firePressed = input != null ? input.FirePressed : Input.GetMouseButtonDown(0);
-        bool fireHeld = input != null ? input.FireHeld : Input.GetMouseButton(0);
+        bool firePressed = input.FirePressedThisFrame;
+        bool fireHeld = input.FireHeld;
 
-        bool altPressed = input != null ? input.FireAltPressed : Input.GetMouseButtonDown(1);
-        bool altHeld = input != null ? input.FireAltHeld : Input.GetMouseButton(1);
+        bool altPressed = input.FireAltPressed;
+        bool altHeld = input.FireAltHeld;
 
-        sniperGun.CombatADSInput(altPressed, altHeld, Input.mouseScrollDelta.y);
+        float scroll = 0f;
+
+        sniperGun.CombatADSInput(altPressed, altHeld, scroll);
         sniperGun.CombatFireInput(firePressed, fireHeld);
     }
 
@@ -237,7 +227,6 @@ public class MountedSniperStation : MonoBehaviour
             if (r != null)
                 r.enabled = visible;
     }
-
 
     void TrackStationAmmo()
     {
@@ -572,42 +561,28 @@ public class MountedSniperStation : MonoBehaviour
 
     // ================== TRIGGER / E ==================
 
-    void OnTriggerStay(Collider other)
+    public void Press()
     {
-        Transform t = other.transform;
-        Transform playerRoot = null;
+        if (IsPlayerMounted)
+            return;
 
-        while (t != null)
+        if (Time.time < mountInputLockUntil)
+            return;
+
+        Transform playerRoot = ResolvePlayerRootFromScene();
+        if (playerRoot == null)
         {
-            if (t.CompareTag("Player"))
-            {
-                playerRoot = t;
-                break;
-            }
-
-            t = t.parent;
+            Debug.LogWarning("[MountedSniperStation] Nie znaleziono Player.", this);
+            return;
         }
 
-        if (!playerRoot) return;
-
-        playerInTrigger = true;
-        cachedPlayerRoot = playerRoot;
+        MountPlayer(playerRoot);
+        mountInputLockUntil = Time.time + mountInputLockTime;
     }
 
-    void OnTriggerExit(Collider other)
+    private Transform ResolvePlayerRootFromScene()
     {
-        Transform t = other.transform;
-
-        while (t != null)
-        {
-            if (t.CompareTag("Player"))
-            {
-                playerInTrigger = false;
-                cachedPlayerRoot = null;
-                return;
-            }
-
-            t = t.parent;
-        }
+        GameObject playerGo = GameObject.FindGameObjectWithTag("Player");
+        return playerGo != null ? playerGo.transform.root : null;
     }
 }

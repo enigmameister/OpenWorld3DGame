@@ -2,28 +2,31 @@ using System.Collections;
 using UnityEngine;
 
 [RequireComponent(typeof(Collider))]
-public class GateButton : MonoBehaviour
+public class GateButton : MonoBehaviour, IPressable
 {
-    public Transform gate;          // Gate_2
-    public float moveDistance = 6f; // ile jednostek wzd³u¿ -X
+    public Transform gate;
+    public float moveDistance = 6f;
     public float moveSpeed = 3f;
 
     public Renderer buttonRenderer;
     public Color idleColor = Color.red;
-    public Color openColor = Color.green;  // otwieranie
-    public Color closeColor = Color.blue;  // zamykanie
+    public Color openColor = Color.green;
+    public Color closeColor = Color.blue;
 
-    private bool _playerInRange = false;
+    [SerializeField] private string label = "U¿yj przycisku bramy";
+
     private bool _isMoving = false;
-    private bool _toOpen = true;       // pierwszy ruch = otwarcie
+    private bool _toOpen = true;
     private Vector3 _closedPos;
     private Vector3 _openPos;
+
+    public string Label => _isMoving ? "Brama w ruchu" : label;
 
     void Start()
     {
         if (!gate)
         {
-            Debug.LogWarning("GateButton: brak referencji do bramy!");
+            Debug.LogWarning("GateButton: brak referencji do bramy!", this);
             enabled = false;
             return;
         }
@@ -33,19 +36,17 @@ public class GateButton : MonoBehaviour
 
         if (buttonRenderer != null)
             buttonRenderer.material.color = idleColor;
-
-        GetComponent<Collider>().isTrigger = true;
     }
 
-    void Update()
+    public void Press()
     {
-        if (!_playerInRange || _isMoving) return;
-        if (PlayerInputHandler.Instance == null) return;
+        if (_isMoving)
+            return;
 
-        if (PlayerInputHandler.Instance.InteractPressedThisFrame)
-        {
-            StartCoroutine(MoveGate());
-        }
+        if (gate == null)
+            return;
+
+        StartCoroutine(MoveGate());
     }
 
     IEnumerator MoveGate()
@@ -67,22 +68,10 @@ public class GateButton : MonoBehaviour
         }
 
         gate.position = to;
-        _toOpen = !_toOpen;          // nastêpnym razem odwrotny kierunek
+        _toOpen = !_toOpen;
         _isMoving = false;
 
         if (buttonRenderer != null)
             buttonRenderer.material.color = idleColor;
-    }
-
-    void OnTriggerEnter(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            _playerInRange = true;
-    }
-
-    void OnTriggerExit(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            _playerInRange = false;
     }
 }

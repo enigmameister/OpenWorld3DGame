@@ -2,7 +2,7 @@ using System.Collections;
 using UnityEngine;
 
 [RequireComponent(typeof(Collider))]
-public class ButtonPlatformController : MonoBehaviour
+public class ButtonPlatformController : MonoBehaviour, IPressable
 {
     [Header("Platforma")]
     public Transform platform;
@@ -13,12 +13,15 @@ public class ButtonPlatformController : MonoBehaviour
     [Header("Wygl¹d przycisku")]
     public Renderer buttonRenderer;
     public Color idleColor = Color.red;
-    public Color activeColor = Color.green;   // start -> end
-    public Color returnColor = Color.blue;    // end -> start
+    public Color activeColor = Color.green;
+    public Color returnColor = Color.blue;
 
-    private bool _playerInRange = false;
+    [SerializeField] private string label = "U¿yj przycisku platformy";
+
     private bool _isMoving = false;
     private bool _toEnd = true;
+
+    public string Label => _isMoving ? "Platforma w ruchu" : label;
 
     void Start()
     {
@@ -26,22 +29,21 @@ public class ButtonPlatformController : MonoBehaviour
             buttonRenderer.material.color = idleColor;
     }
 
-    void Update()
+    public void Press()
     {
-        if (!_playerInRange || _isMoving) return;
-        if (PlayerInputHandler.Instance == null) return;
+        if (_isMoving)
+            return;
 
-        if (PlayerInputHandler.Instance.InteractPressedThisFrame)
-        {
-            StartCoroutine(MovePlatform());
-        }
+        if (platform == null || startPoint == null || endPoint == null)
+            return;
+
+        StartCoroutine(MovePlatform());
     }
 
     IEnumerator MovePlatform()
     {
         _isMoving = true;
 
-        // ustaw kolor w zale¿noœci od kierunku
         if (buttonRenderer != null)
             buttonRenderer.material.color = _toEnd ? activeColor : returnColor;
 
@@ -62,17 +64,5 @@ public class ButtonPlatformController : MonoBehaviour
 
         if (buttonRenderer != null)
             buttonRenderer.material.color = idleColor;
-    }
-
-    void OnTriggerEnter(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            _playerInRange = true;
-    }
-
-    void OnTriggerExit(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            _playerInRange = false;
     }
 }

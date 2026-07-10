@@ -144,7 +144,7 @@ public class NPCGun : MonoBehaviour
             PlayerStats player = hit.collider.GetComponentInParent<PlayerStats>();
             if (player != null)
             {
-                int finalDamage = Mathf.RoundToInt(damage * GameDifficulty.NpcDamageMultiplier);
+                int finalDamage = Mathf.RoundToInt(damage);
                 player.TakeDamage(finalDamage, attackerName);
                 break;
             }
@@ -152,7 +152,7 @@ public class NPCGun : MonoBehaviour
             IDamageable damageable = hit.collider.GetComponentInParent<IDamageable>();
             if (damageable != null)
             {
-                int finalDamage = Mathf.RoundToInt(damage * GameDifficulty.NpcDamageMultiplier);
+                int finalDamage = Mathf.RoundToInt(damage);
                 damageable.TakeDamage(finalDamage, attackerName);
                 break;
             }

@@ -117,16 +117,45 @@ public class PlayerMovement : MonoBehaviour, IWettable
     [Header("Drabinka")]
     private bool onLadder = false;
     private Transform ladderTransform;
+    private LadderZone currentLadderZone;
     private float ladderJumpTimer = 0f;
+
     public float ladderSpeed = 2.5f;
+    public float ladderSideSpeed = 2.0f;
+
+    [Tooltip("Odwraca A/D na drabinie, gdy ladder right jest przeciwny.")]
+    public bool invertLadderSideInput = true;
+
+    public float ladderClampLerp = 20f;
+
+    private PlayerFallDamage fallDamage;
+
+    public bool IsOnLadderPublic => onLadder;
 
     [Header("Woda")]
     private bool inWater = false;
     private float waterSurfaceY;
+
     public float swimSpeed = 3f;
     public float swimGravity = -1.5f;
     public float verticalSwimMultiplier = 1.5f;
     public float headOffsetFromFeet = 1.6f;
+
+    [Header("Woda - powierzchnia")]
+    public float surfaceHeadOffset = 0.18f;       // ile głowa może wystawać nad wodę
+    public float surfaceFloatForce = 5.5f;        // jak mocno wypycha na powierzchnię
+    public float surfaceSinkSpeed = -0.25f;       // dryf w dół, gdy nic nie wciskasz
+    public float maxSwimUpVelocity = 2.2f;
+    public float maxSwimDownVelocity = -1.2f;
+
+    [Header("Woda - wyskok przy brzegu")]
+    public float waterLedgeCheckDistance = 1.05f;
+    public float waterLedgeCheckHeight = 0.85f;
+    public float waterLedgePopUpVelocity = 5.5f;
+    public float waterLedgePopForwardSpeed = 3.0f;
+    public float waterLedgeCooldown = 0.35f;
+
+    private float waterLedgeTimer;
 
     private bool isClimbingOutOfWater = false;
     private Vector3 climbTargetPosition;
@@ -242,6 +271,7 @@ public class PlayerMovement : MonoBehaviour, IWettable
         controller = _cc;
 
         playerStats = GetComponentInParent<PlayerStats>();
+        fallDamage = GetComponent<PlayerFallDamage>();
 
         Camera cam = Camera.main;
         if (cam != null)
@@ -775,19 +805,40 @@ public class PlayerMovement : MonoBehaviour, IWettable
     }
 
     // Swimming
-    // ——— WODA ———
     public void EnterWater(float surfaceY)
     {
         inWater = true;
         waterSurfaceY = surfaceY;
-        controller.Move(Vector3.down * 0.2f);
-        if (showDebug) Debug.Log("💧 EnterWater - wymuszam zanurzenie: velocity.y = -0.5");
+
+        // Nie wciskaj gracza w dół przy każdym wejściu/re-enterze triggera.
+        if (velocity.y < -2f)
+            velocity.y *= 0.35f;
+
+        if (showDebug)
+            Debug.Log($"💧 EnterWater surfaceY={surfaceY}");
     }
 
     public void ExitWater()
     {
         inWater = false;
-        velocity = Vector3.zero;
+
+        // Nie zeruj velocity po wyskoku z wody, bo wtedy OnTriggerExit może zabić cały pop-up.
+        if (waterLedgeTimer <= 0f)
+            velocity = Vector3.zero;
+
+        if (playerStats != null && playerStats.isUnderwater)
+            playerStats.SetUnderwaterState(false);
+    }
+
+    private float GetSwimEyeY()
+    {
+        if (cameraPivot != null)
+            return cameraPivot.position.y;
+
+        if (cachedCameraTransform != null)
+            return cachedCameraTransform.position.y;
+
+        return transform.position.y + headOffsetFromFeet;
     }
 
     public void HandleSwimming(Vector3 waterNormal, float surfaceY)
@@ -795,119 +846,319 @@ public class PlayerMovement : MonoBehaviour, IWettable
         var inputHandler = PlayerInputHandler.Instance;
         isGrounded = false;
 
-        if (!inWater || isClimbingOutOfWater) return;
+        if (!inWater)
+            return;
+
+        // Aktywny "pop" z wody przy brzegu.
+        // Przez chwilę NIE clampujemy velocity.y do maxSwimUpVelocity,
+        // bo inaczej wyskok zostaje zabity w następnej klatce.
+        if (waterLedgeTimer > 0f)
+        {
+            waterLedgeTimer -= Time.deltaTime;
+
+            controller.Move(velocity * Time.deltaTime);
+
+            // delikatna grawitacja, ale słabsza niż normalnie
+            velocity.y += gravity * 0.35f * Time.deltaTime;
+
+            // jeśli impuls już opadł, wracamy do normalnego pływania
+            if (waterLedgeTimer <= 0f || velocity.y <= 0f)
+                waterLedgeTimer = 0f;
+
+            return;
+        }
 
         Vector2 input = inputHandler?.Move ?? Vector2.zero;
-        Vector3 move = transform.right * input.x + transform.forward * input.y;
 
-        bool jumpHeld = inputHandler.JumpHeld;
-        bool crouchHeld = inputHandler?.IsCrouching ?? false;
+        if (Mathf.Abs(input.x) < 0.05f) input.x = 0f;
+        if (Mathf.Abs(input.y) < 0.05f) input.y = 0f;
 
-        Vector3 verticalMove = Vector3.zero;
-        float headY = controller.bounds.max.y;
-        float maxHeadY = surfaceY + 0.1f;
-        float bottomY = transform.position.y;
+        Transform cam = cachedCameraTransform != null ? cachedCameraTransform : transform;
 
-        float breathThreshold = surfaceY + 0.05f;
-        bool fullySubmerged = headY < breathThreshold;
+        Vector3 camForward = cam.forward;
+        camForward.y = 0f;
+
+        if (camForward.sqrMagnitude < 0.001f)
+            camForward = transform.forward;
+
+        camForward.Normalize();
+
+        Vector3 camRight = cam.right;
+        camRight.y = 0f;
+        camRight.Normalize();
+
+        Vector3 move =
+            camRight * input.x +
+            camForward * input.y;
+
+        if (move.sqrMagnitude > 1f)
+            move.Normalize();
+
+        bool jumpHeld = inputHandler != null && inputHandler.JumpHeld;
+
+        // CTRL albo LEFT SHIFT = nurkowanie / opadanie w wodzie
+        bool diveHeld =
+            inputHandler != null &&
+            (inputHandler.IsCrouching || inputHandler.IsSprinting);
+
+        float eyeY = GetSwimEyeY();
+        float desiredEyeY = surfaceY + surfaceHeadOffset;
+        float eyeDiff = desiredEyeY - eyeY;
+
+        bool headNearSurface = eyeY >= surfaceY - 0.65f;
+        bool headAboveSurface = eyeY >= surfaceY + 0.02f;
+        bool fullySubmerged = eyeY < surfaceY - 0.05f;
 
         if (playerStats != null && playerStats.isUnderwater != fullySubmerged)
             playerStats.SetUnderwaterState(fullySubmerged);
 
-        // Wspinaczka z wody
-        if (jumpHeld && headY >= surfaceY - 0.1f)
+        // WYSKOK PRZY BRZEGU - tylko gdy trzymasz Jump i jesteś przy powierzchni.
+        if (jumpHeld && headNearSurface && waterLedgeTimer <= 0f && TryWaterLedgePop(camForward, surfaceY, out Vector3 popVelocity))
         {
-            Vector3 rayOrigin = transform.position + Vector3.up * 0.8f;
-            Vector3 forward = transform.forward;
-
-            if (Physics.Raycast(rayOrigin, forward, out RaycastHit wallHit, 0.6f, defaultObstacleMask))
-            {
-                Vector3 ledgeCheck = wallHit.point + Vector3.up * 1.2f;
-                bool spaceAbove = !Physics.CheckSphere(ledgeCheck, 0.3f, defaultObstacleMask);
-
-                if (spaceAbove)
-                {
-                    climbTargetPosition = wallHit.point + Vector3.up * 1.3f - forward * 0.1f;
-                    isClimbingOutOfWater = true;
-                }
-            }
-        }
-
-        if (isClimbingOutOfWater)
-        {
-            controller.enabled = false;
-            transform.position = climbTargetPosition;
-            velocity = Vector3.up * 6f;
+            // NIE ustawiamy inWater = false.
+            // Z wody wyjdziemy dopiero przez WaterZone.OnTriggerExit().
             isClimbingOutOfWater = false;
-            inWater = false;
-            controller.enabled = true;
+
+            velocity = popVelocity;
+            waterLedgeTimer = waterLedgeCooldown;
+
+            controller.Move(velocity * Time.deltaTime);
             return;
         }
 
+        // RUCH POZIOMY W WODZIE
+        Vector3 horizontalMove = move * swimSpeed;
+
+        // PION / POWIERZCHNIA
         if (jumpHeld)
         {
-            float maxHeadAboveWater = 0.25f;
-            float currentHeadY = controller.bounds.max.y;
-            float targetHeadY = surfaceY + maxHeadAboveWater;
-            float diff = targetHeadY - currentHeadY;
-            if (diff > 0.01f)
+            // Spacja = aktywne wypływanie i utrzymanie oczu/kamery przy tafli.
+            if (eyeY < desiredEyeY)
             {
-                velocity.y = Mathf.MoveTowards(velocity.y, swimSpeed * 1.2f, Time.deltaTime * 3f);
-                verticalMove = Vector3.up;
+                float boost = Mathf.Clamp(
+                    eyeDiff * surfaceFloatForce,
+                    0.45f,
+                    maxSwimUpVelocity
+                );
+
+                velocity.y = Mathf.MoveTowards(
+                    velocity.y,
+                    boost,
+                    Time.deltaTime * surfaceFloatForce
+                );
             }
             else
             {
-                velocity.y = Mathf.MoveTowards(velocity.y, 0f, Time.deltaTime * 2f);
+                // Kamera już jest nad taflą — dryfuj, nie wyrzucaj dalej w górę.
+                velocity.y = Mathf.MoveTowards(
+                    velocity.y,
+                    surfaceSinkSpeed,
+                    Time.deltaTime * 2.0f
+                );
             }
         }
-        else if (crouchHeld)
+        else if (diveHeld)
         {
-            verticalMove = Vector3.down;
-            float crouchSinkSpeed = -1.0f;
-            velocity.y = Mathf.MoveTowards(velocity.y, crouchSinkSpeed, Time.deltaTime * 2f);
+            // CTRL albo LEFT SHIFT = szybsze nurkowanie / opadanie.
+            velocity.y = Mathf.MoveTowards(
+                velocity.y,
+                maxSwimDownVelocity,
+                Time.deltaTime * 4.0f
+            );
         }
         else
         {
-            float passiveFallSpeed = -0.3f;
-            velocity.y = Mathf.MoveTowards(velocity.y, passiveFallSpeed, Time.deltaTime * 0.25f);
+            // Brak spacji = NIE utrzymuj na tafli.
+            // Gracz ma samoistnie opadać na dno.
+            velocity.y = Mathf.MoveTowards(
+                velocity.y,
+                swimGravity,
+                Time.deltaTime * 2.5f
+            );
         }
 
-        velocity.y = Mathf.Clamp(velocity.y, -1.0f, 1.5f);
 
-        Vector3 swimDir = move + verticalMove * verticalSwimMultiplier;
-        Vector3 moveTotal = swimDir * swimSpeed * Time.deltaTime + new Vector3(0, velocity.y, 0) * Time.deltaTime;
-        controller.Move(moveTotal);
+        velocity.y = Mathf.Clamp(velocity.y, maxSwimDownVelocity, maxSwimUpVelocity);
 
-        // --- staminy w wodzie ---
-        bool anySwimInput = (move.sqrMagnitude > 1e-4f) || jumpHeld || crouchHeld;
+        Vector3 totalMove =
+            horizontalMove * Time.deltaTime +
+            Vector3.up * velocity.y * Time.deltaTime;
 
-        // czy stoimy na dnie? (krótki spherecast)
+        controller.Move(totalMove);
+
+        HandleSwimmingStamina(move, jumpHeld, diveHeld);
+    }
+
+    private bool TryWaterLedgePop(Vector3 forward, float surfaceY, out Vector3 popVelocity)
+    {
+        popVelocity = Vector3.zero;
+
+        if (controller == null)
+            return false;
+
+        if (forward.sqrMagnitude < 0.001f)
+            forward = transform.forward;
+
+        forward.y = 0f;
+        forward.Normalize();
+
+        int mask = defaultObstacleMask;
+
+        // Sprawdzamy kilka wysokości, bo brzeg może być wyżej/niżej względem głowy.
+        Vector3 feet = transform.position;
+
+        Vector3[] origins =
+        {
+        feet + Vector3.up * 0.45f,                 // nisko
+        feet + Vector3.up * 0.95f,                 // brzuch/klatka
+        new Vector3(feet.x, surfaceY + 0.10f, feet.z), // okolice tafli
+        new Vector3(feet.x, surfaceY + 0.45f, feet.z)  // trochę nad taflą
+    };
+
+        bool hasWallOrLedge = false;
+        RaycastHit bestHit = default;
+
+        for (int i = 0; i < origins.Length; i++)
+        {
+            if (Physics.SphereCast(
+                    origins[i],
+                    Mathf.Max(0.12f, controller.radius * 0.35f),
+                    forward,
+                    out RaycastHit hit,
+                    waterLedgeCheckDistance,
+                    mask,
+                    QueryTriggerInteraction.Ignore))
+            {
+                // Ignoruj trafienia w wodę/trigger.
+                if (hit.collider.isTrigger)
+                    continue;
+
+                hasWallOrLedge = true;
+                bestHit = hit;
+                break;
+            }
+        }
+
+        if (!hasWallOrLedge)
+            return false;
+
+        // Opcjonalnie sprawdzamy, czy jest jakaś powierzchnia/ląd przed graczem,
+        // ale NIE blokujemy wyskoku, jeśli jej nie znajdziemy.
+        Vector3 ledgeProbeStart =
+            bestHit.point +
+            forward * 0.65f +
+            Vector3.up * 1.5f;
+
+        bool foundTop = Physics.Raycast(
+            ledgeProbeStart,
+            Vector3.down,
+            out RaycastHit topHit,
+            2.4f,
+            mask,
+            QueryTriggerInteraction.Ignore
+        );
+
+        // Jeżeli znaleźliśmy górę brzegu, pchamy bardziej do przodu.
+        // Jeżeli nie, robimy zwykłe wybicie przy ścianie.
+        float forwardMul = foundTop ? 1.25f : 0.75f;
+
+        popVelocity =
+            forward * (waterLedgePopForwardSpeed * forwardMul) +
+            Vector3.up * waterLedgePopUpVelocity;
+
+        return true;
+    }
+    private bool CanWaterLedgeJump(Vector3 forward)
+    {
+        if (controller == null)
+            return false;
+
+        int mask = defaultObstacleMask;
+
+        Vector3 lowerOrigin = transform.position + Vector3.up * waterLedgeCheckHeight;
+
+        // Szukamy brzegu/ściany przed graczem.
+        if (!Physics.Raycast(
+                lowerOrigin,
+                forward,
+                out RaycastHit wallHit,
+                waterLedgeCheckDistance,
+                mask,
+                QueryTriggerInteraction.Ignore))
+        {
+            return false;
+        }
+
+        // Sprawdzamy, czy nad miejscem wyjścia jest miejsce na gracza.
+        Vector3 standCheckCenter =
+            wallHit.point +
+            forward * 0.45f +
+            Vector3.up * (controller.height * 0.5f + 0.15f);
+
+        float radius = Mathf.Max(0.1f, controller.radius * 0.9f);
+        float half = Mathf.Max(0.1f, controller.height * 0.5f - radius);
+
+        Vector3 p1 = standCheckCenter + Vector3.up * half;
+        Vector3 p2 = standCheckCenter - Vector3.up * half;
+
+        bool blocked = Physics.CheckCapsule(
+            p1,
+            p2,
+            radius,
+            mask,
+            QueryTriggerInteraction.Ignore
+        );
+
+        return !blocked;
+    }
+
+    private void HandleSwimmingStamina(Vector3 move, bool jumpHeld, bool crouchHeld)
+    {
+        bool anySwimInput =
+            move.sqrMagnitude > 0.001f ||
+            jumpHeld ||
+            crouchHeld;
+
         bool onBottom = false;
+
+        if (controller != null)
         {
             float r = Mathf.Max(0.1f, controller.radius * 0.8f);
-            onBottom = Physics.SphereCast(transform.position, r, Vector3.down, out _, 0.25f,
-                                          defaultObstacleMask,
-                                          QueryTriggerInteraction.Ignore);
+
+            onBottom = Physics.SphereCast(
+                transform.position,
+                r,
+                Vector3.down,
+                out _,
+                0.25f,
+                defaultObstacleMask,
+                QueryTriggerInteraction.Ignore
+            );
         }
 
         if (!NoStamina)
         {
             if (anySwimInput && !onBottom)
             {
-                // pływanie zużywa ok. 25% tempa lądowego; wynurzanie/zanurzanie ~40%
                 float swimDrainMult = (jumpHeld || crouchHeld) ? 0.40f : 0.25f;
                 float drain = staminaDrainPerSecond * swimDrainMult * Time.deltaTime;
+
                 currentStamina = Mathf.Max(0f, currentStamina - drain);
                 staminaRegenTimer = Mathf.Max(staminaRegenTimer, 0.5f);
             }
             else
             {
-                // brak ruchu albo stoimy na dnie → regeneracja jak na postoju na lądzie
-                if (staminaRegenTimer > 0f) staminaRegenTimer -= Time.deltaTime;
+                if (staminaRegenTimer > 0f)
+                    staminaRegenTimer -= Time.deltaTime;
                 else if (currentStamina < staminaMax)
                 {
-                    currentStamina = Mathf.Min(staminaMax, currentStamina + staminaRegenIdle * Time.deltaTime);
-                    if (currentStamina >= 25f) staminaDepleted = false;
+                    currentStamina = Mathf.Min(
+                        staminaMax,
+                        currentStamina + staminaRegenIdle * Time.deltaTime
+                    );
+
+                    if (currentStamina >= 25f)
+                        staminaDepleted = false;
                 }
             }
         }
@@ -1162,42 +1413,143 @@ public class PlayerMovement : MonoBehaviour, IWettable
 
     void HandleLadderClimb()
     {
-        Vector2 input = PlayerInputHandler.Instance?.Move ?? Vector2.zero;
-        float vertical = input.y;
-        Vector3 climb = Vector3.up * vertical * ladderSpeed;
-        controller.Move(climb * Time.deltaTime);
+        var inputHandler = PlayerInputHandler.Instance;
+        Vector2 input = inputHandler?.Move ?? Vector2.zero;
+
+        // Deadzone, żeby minimalny szum z pada/klawiatury nie ruszał gracza.
+        if (Mathf.Abs(input.x) < 0.05f) input.x = 0f;
+        if (Mathf.Abs(input.y) < 0.05f) input.y = 0f;
+
+        Vector3 up = Vector3.up;
+
+        Vector3 right =
+            currentLadderZone != null
+                ? currentLadderZone.Right
+                : (ladderTransform != null ? ladderTransform.right : transform.right);
+
+        right.y = 0f;
+
+        if (right.sqrMagnitude < 0.001f)
+            right = transform.right;
+
+        right.Normalize();
+
+        float sideInput = invertLadderSideInput ? -input.x : input.x;
+
+        Vector3 verticalMove = up * input.y * ladderSpeed;
+        Vector3 sideMove = right * sideInput * ladderSideSpeed;
+
+        Vector3 finalMove = verticalMove + sideMove;
+
+        // Najpierw sprawdzamy przewidywaną pozycję.
+        if (currentLadderZone != null)
+        {
+            Vector3 predictedPosition = transform.position + finalMove * Time.deltaTime;
+            Vector3 clampedPosition = currentLadderZone.ClampWorldPositionToZone(
+                predictedPosition,
+                controller.radius
+            );
+
+            Vector3 allowedDelta = clampedPosition - transform.position;
+
+            // Jeżeli nie wciskasz A/D, nie pozwalamy clampowi samemu przesuwać gracza bokiem.
+            if (Mathf.Approximately(sideInput, 0f))
+            {
+                Vector3 horizontalAllowed = allowedDelta;
+                horizontalAllowed.y = 0f;
+
+                allowedDelta -= horizontalAllowed;
+            }
+
+            controller.Move(allowedDelta);
+        }
+        else
+        {
+            controller.Move(finalMove * Time.deltaTime);
+        }
+
         velocity = Vector3.zero;
 
-        if (PlayerInputHandler.Instance?.JumpPressed ?? false)
+        // Skok / odczepienie od drabiny
+        if (inputHandler != null && inputHandler.JumpPressed)
         {
             ExitLadder();
+
             Transform cam = cachedCameraTransform != null
                 ? cachedCameraTransform
                 : transform;
 
             Vector3 jumpDirection = cam.forward;
             jumpDirection.y = 0f;
+
+            if (jumpDirection.sqrMagnitude < 0.001f)
+                jumpDirection = -transform.forward;
+
             jumpDirection.Normalize();
 
-            Vector3 jumpForce = jumpDirection * speed * airControlFactor;
-            jumpForce.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
+            velocity = jumpDirection * speed * airControlFactor;
+            velocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
 
-            velocity = jumpForce;
             ladderJumpTimer = 0.25f;
         }
     }
 
+    public void EnterLadder(LadderZone ladderZone)
+    {
+        if (ladderZone == null)
+            return;
+
+        onLadder = true;
+        currentLadderZone = ladderZone;
+        ladderTransform = ladderZone.transform;
+
+        velocity = Vector3.zero;
+
+        if (fallDamage != null)
+            fallDamage.CancelFallTracking();
+    }
+
+    // kompatybilność awaryjna, gdyby gdzieś jeszcze był stary call EnterLadder(transform)
     public void EnterLadder(Transform ladder)
     {
         onLadder = true;
+        currentLadderZone = null;
         ladderTransform = ladder;
+
         velocity = Vector3.zero;
+
+        if (fallDamage != null)
+            fallDamage.CancelFallTracking();
     }
 
     public void ExitLadder()
     {
+        if (!onLadder)
+            return;
+
+        bool shouldStartFall =
+            controller != null &&
+            controller.enabled &&
+            !controller.isGrounded;
+
+        float startY = transform.position.y;
+
         onLadder = false;
+        currentLadderZone = null;
         ladderTransform = null;
+
+        velocity = Vector3.zero;
+
+        if (shouldStartFall && fallDamage != null)
+            fallDamage.ForceStartFallFrom(startY);
+    }
+
+    public void ExitLadder(LadderZone ladderZone)
+    {
+        if (currentLadderZone != null && currentLadderZone != ladderZone)
+            return;
+
+        ExitLadder();
     }
 
     // QUICK SAVE-LOAD System

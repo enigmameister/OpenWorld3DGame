@@ -198,11 +198,24 @@ public class WorldMapUI : MonoBehaviour
 
     void Update()
     {
-        if (PlayerInputHandler.Instance != null &&
-            PlayerInputHandler.Instance.MapTogglePressedThisFrame)
+        if (PlayerInputHandler.Instance != null)
         {
-            Toggle();
-            return;
+            if (opened)
+            {
+                if (PlayerInputHandler.Instance.MapToggleRawPressedThisFrame)
+                {
+                    SetOpen(false);
+                    return;
+                }
+            }
+            else
+            {
+                if (PlayerInputHandler.Instance.MapTogglePressedThisFrame)
+                {
+                    SetOpen(true);
+                    return;
+                }
+            }
         }
 
         if (IsGpsBlockedByRace())

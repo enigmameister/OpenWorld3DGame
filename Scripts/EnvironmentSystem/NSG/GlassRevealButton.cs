@@ -1,51 +1,34 @@
 using UnityEngine;
 
 [RequireComponent(typeof(Collider))]
-public class GlassRevealButton : MonoBehaviour
+public class GlassRevealButton : MonoBehaviour, IPressable
 {
     public GlassGameManager glassGameManager;
     public Renderer buttonRenderer;
     public Color idleColor = Color.red;
     public Color activeColor = Color.green;
 
-    private bool _playerInRange = false;
+    [SerializeField] private string revealLabel = "Poka¿ szk³o";
+    [SerializeField] private string hideLabel = "Ukryj podgl¹d szk³a";
+
     private bool _revealed = false;
+
+    public string Label => _revealed ? hideLabel : revealLabel;
 
     private void Start()
     {
-        GetComponent<Collider>().isTrigger = true;
-
         if (buttonRenderer != null)
             buttonRenderer.material.color = idleColor;
     }
 
-    private void Update()
+    public void Press()
     {
-        if (!_playerInRange) return;
-        if (PlayerInputHandler.Instance == null) return;
+        _revealed = !_revealed;
 
-        if (PlayerInputHandler.Instance.InteractPressedThisFrame)
-        {
-            _revealed = !_revealed;
+        if (glassGameManager != null)
+            glassGameManager.RevealAll(_revealed);
 
-            if (glassGameManager != null)
-                glassGameManager.RevealAll(_revealed);
-
-            if (buttonRenderer != null)
-                buttonRenderer.material.color = _revealed ? activeColor : idleColor;
-        }
-    }
-
-    private void OnTriggerEnter(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            _playerInRange = true;
-    }
-
-    private void OnTriggerExit(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            _playerInRange = false;
+        if (buttonRenderer != null)
+            buttonRenderer.material.color = _revealed ? activeColor : idleColor;
     }
 }
-

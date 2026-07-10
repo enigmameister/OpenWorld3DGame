@@ -139,7 +139,7 @@ public class NPCReactive : MonoBehaviour
 
     private bool InteractPressedThisFrame =>
         PlayerInputHandler.Instance != null &&
-        PlayerInputHandler.Instance.InteractPressed;
+        PlayerInputHandler.Instance.InteractPressedThisFrame;
 
     // =========================================================
     // UNITY

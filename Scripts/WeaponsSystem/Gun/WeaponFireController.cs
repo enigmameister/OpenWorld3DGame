@@ -363,7 +363,7 @@ public class WeaponFireController : MonoBehaviour
             if (playerVictim != null)
             {
                 int finalDmg = Mathf.RoundToInt(
-                    currentDamage * GameDifficulty.NpcDamageMultiplier
+                    currentDamage
                 );
 
                 playerVictim.TakeDamage(finalDmg, attackerName);
@@ -374,7 +374,7 @@ public class WeaponFireController : MonoBehaviour
             if (damageable != null)
             {
                 int finalDmg = Mathf.RoundToInt(
-                    currentDamage * GameDifficulty.NpcDamageMultiplier
+                    currentDamage
                 );
 
                 damageable.TakeDamage(finalDmg, attackerName);

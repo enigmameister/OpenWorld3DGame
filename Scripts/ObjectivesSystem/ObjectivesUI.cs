@@ -42,6 +42,12 @@ public class ObjectivesUI : MonoBehaviour
 
     public bool IsOpen { get; private set; }
 
+    private bool previousGameplayBlocked;
+    private bool previousMovementLocked;
+    private bool previousLookLocked;
+    private bool previousCursorVisible;
+    private CursorLockMode previousCursorLockMode;
+
     private void Awake()
     {
         if (root == null)
@@ -70,11 +76,32 @@ public class ObjectivesUI : MonoBehaviour
 
     private void Update()
     {
-        if (PlayerInputHandler.Instance != null &&
-            PlayerInputHandler.Instance.ObjectivesRawPressedThisFrame)
+        if (PlayerInputHandler.Instance != null)
         {
-            Toggle();
-            return;
+            if (IsOpen)
+            {
+                // Zamkniêcie objectives tym samym klawiszem O nawet gdy gameplay jest zablokowany.
+                if (PlayerInputHandler.Instance.ObjectivesRawPressedThisFrame)
+                {
+                    Close();
+                    return;
+                }
+            }
+            else
+            {
+                bool normalOpen =
+                    PlayerInputHandler.Instance.ObjectivesPressedThisFrame;
+
+                bool bankOverlayOpen =
+                    IsBankUiOpen() &&
+                    PlayerInputHandler.Instance.ObjectivesRawPressedThisFrame;
+
+                if (normalOpen || bankOverlayOpen)
+                {
+                    Open();
+                    return;
+                }
+            }
         }
 
         if (!IsOpen)
@@ -217,6 +244,12 @@ public class ObjectivesUI : MonoBehaviour
 
     private void LockPlayer()
     {
+        previousGameplayBlocked = PlayerInputHandler.GameplayInputBlocked;
+        previousMovementLocked = PlayerMovement.IsMovementLocked;
+        previousLookLocked = MouseLook.IsLookLocked;
+        previousCursorVisible = Cursor.visible;
+        previousCursorLockMode = Cursor.lockState;
+
         MouseLook.IsLookLocked = true;
         PlayerMovement.IsMovementLocked = true;
         PlayerInputHandler.SetGameplayBlocked(true);
@@ -227,12 +260,12 @@ public class ObjectivesUI : MonoBehaviour
 
     private void UnlockPlayer()
     {
-        MouseLook.IsLookLocked = false;
-        PlayerMovement.IsMovementLocked = false;
-        PlayerInputHandler.SetGameplayBlocked(false);
+        PlayerInputHandler.SetGameplayBlocked(previousGameplayBlocked);
+        PlayerMovement.IsMovementLocked = previousMovementLocked;
+        MouseLook.IsLookLocked = previousLookLocked;
 
-        Cursor.visible = false;
-        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = previousCursorVisible;
+        Cursor.lockState = previousCursorLockMode;
     }
 
     public void RefreshLayoutAndScrollbarDelayed()
@@ -292,5 +325,26 @@ public class ObjectivesUI : MonoBehaviour
             return;
 
         expandedStates[missionId] = expanded;
+    }
+
+    private bool IsBankUiOpen()
+    {
+        var bankDialogue = FindFirstObjectByType<BankDialogueUI>(FindObjectsInactive.Include);
+        if (bankDialogue != null && bankDialogue.IsOpen)
+            return true;
+
+        var accountOps = FindFirstObjectByType<AccountOperationsUI>(FindObjectsInactive.Include);
+        if (accountOps != null && accountOps.IsOpen)
+            return true;
+
+        var createAccount = FindFirstObjectByType<BankAccountCreateUI>(FindObjectsInactive.Include);
+        if (createAccount != null && createAccount.gameObject.activeInHierarchy)
+            return true;
+
+        var cardOps = FindFirstObjectByType<CreditCardOperationsUI>(FindObjectsInactive.Include);
+        if (cardOps != null && cardOps.gameObject.activeInHierarchy)
+            return true;
+
+        return false;
     }
 }

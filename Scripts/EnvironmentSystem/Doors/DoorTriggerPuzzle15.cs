@@ -1,11 +1,11 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-public class DoorTriggerPuzzle15 : MonoBehaviour
+public class DoorTriggerPuzzle15 : MonoBehaviour, IPressable
 {
     [Header("Puzzle")]
     public Puzzle15Controller puzzleController;
-    public GameObject puzzleCanvas; // ca³a logika 15 Puzzle
+    public GameObject puzzleCanvas;
 
     [Header("Drzwi")]
     public Animator doorAnimator;
@@ -15,8 +15,23 @@ public class DoorTriggerPuzzle15 : MonoBehaviour
     public Color flashingColorB = new Color(0.4f, 0f, 0f);
     public float flashSpeed = 2f;
 
-    private bool playerInZone = false;
+    [SerializeField] private string label = "U¿yj panelu puzzli";
+
     private bool doorOpened = false;
+
+    public string Label
+    {
+        get
+        {
+            if (doorOpened)
+                return "Drzwi otwarte";
+
+            if (puzzleController != null && puzzleController.IsSolved())
+                return "Dostêp przyznany";
+
+            return label;
+        }
+    }
 
     void Update()
     {
@@ -26,37 +41,31 @@ public class DoorTriggerPuzzle15 : MonoBehaviour
             statusLight.color = Color.Lerp(flashingColorA, flashingColorB, t);
         }
 
-        if (playerInZone && !doorOpened && PlayerInputHandler.Instance != null &&
-            PlayerInputHandler.Instance.InteractPressedThisFrame)
-        {
-            puzzleController.OpenPuzzle();
-        }
-
         if (puzzleController != null && puzzleController.IsSolved() && !doorOpened)
         {
             TriggerDoorOpen();
         }
     }
 
+    public void Press()
+    {
+        if (doorOpened)
+            return;
+
+        if (puzzleController == null)
+            return;
+
+        puzzleController.OpenPuzzle();
+    }
+
     private void TriggerDoorOpen()
     {
         doorOpened = true;
+
         if (doorAnimator != null)
             doorAnimator.SetBool("Key", true);
 
         if (statusLight != null)
             statusLight.color = openedColor;
-    }
-
-    private void OnTriggerEnter(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            playerInZone = true;
-    }
-
-    private void OnTriggerExit(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            playerInZone = false;
     }
 }

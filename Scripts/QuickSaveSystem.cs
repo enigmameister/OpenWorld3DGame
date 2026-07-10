@@ -1,10 +1,13 @@
 ﻿using System;
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
-using System.Collections;
 
 public class QuickSaveSystem : MonoBehaviour
 {
+    public string bankJson;
+
     public static QuickSaveSystem Instance { get; private set; }
 
     [Header("References")]
@@ -13,7 +16,11 @@ public class QuickSaveSystem : MonoBehaviour
     public PlayerStats playerStats;
     public DayNightCycle dayNight;
     public WeaponManager weaponManager;
-    public string bankJson;
+
+    [Header("Inventory Save")]
+    [SerializeField] private InventoryItemData[] inventoryItemDatabase;
+    [SerializeField] private bool saveInventoryState = true;
+    [SerializeField] private bool closeInventoryUiBeforeSave = true;
 
     [Header("Fallback Respawn")]
     [SerializeField] private Transform fallbackRespawnPoint;
@@ -55,6 +62,8 @@ public class QuickSaveSystem : MonoBehaviour
         public WeaponStateSnapshotController.WeaponSnapshot weapons;
         public NPCSaveData[] npcs;
         public VehicleSaveData[] vehicles;
+        public InventorySaveData playerInventory;
+        public BoxSaveData[] boxes;
 
         public bool wasInVehicle;
         public string vehicleSaveId;
@@ -104,6 +113,38 @@ public class QuickSaveSystem : MonoBehaviour
         public bool hasFacadeSnapshot;
         public VehicleFacade.VehicleSaveSnapshot facadeSnapshot;
     }
+
+    [Serializable]
+    private class InventorySaveData
+    {
+        public InventoryItemSaveData[] items;
+    }
+
+    [Serializable]
+    private class BoxSaveData
+    {
+        public string saveId;
+        public int cash;
+        public InventoryItemSaveData[] items;
+    }
+
+    [Serializable]
+    private class InventoryItemSaveData
+    {
+        public string itemKey;
+
+        public int count;
+        public int currentAmmo;
+        public int totalAmmo;
+
+        public bool rotated;
+
+        public bool hasBankCardMeta;
+        public BankCardMeta bankCard;
+
+        public int slotIndex;
+    }
+
 
     private void Awake()
     {
@@ -160,6 +201,12 @@ public class QuickSaveSystem : MonoBehaviour
     public void DoQuickSave()
     {
         SaveData data = new SaveData();
+
+        if (saveInventoryState)
+        {
+            PrepareInventoryUiForQuickSave();
+        }
+
         ResolveCurrentVehicleFromRuntime();
 
         data.npcs = CaptureNPCs();
@@ -248,6 +295,13 @@ public class QuickSaveSystem : MonoBehaviour
             data.bankJson = BankSystem.Instance.ExportToJson(pretty: false);
         else
             data.bankJson = null;
+
+
+        if (saveInventoryState)
+        {
+            data.playerInventory = CapturePlayerInventory();
+            data.boxes = CaptureBoxes();
+        }
 
         // Timestamp
         data.timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -400,7 +454,6 @@ public class QuickSaveSystem : MonoBehaviour
 
         Transform savedVehicle = null;
 
-
         if (saveVehicleState && data.wasInVehicle)
         {
             savedVehicle = FindEntityBySaveId(data.vehicleSaveId);
@@ -496,6 +549,12 @@ public class QuickSaveSystem : MonoBehaviour
 
         if (weaponManager)
             weaponManager.ApplySnapshot(data.weapons);
+
+        if (saveInventoryState)
+        {
+            RestorePlayerInventory(data.playerInventory);
+            RestoreBoxes(data.boxes);
+        }
 
         RestoreNPCs(data.npcs);
     }
@@ -1027,4 +1086,238 @@ public class QuickSaveSystem : MonoBehaviour
 
         return null;
     }
+
+    private void PrepareInventoryUiForQuickSave()
+    {
+        if (!closeInventoryUiBeforeSave)
+            return;
+
+        if (ItemAmountDialog.Instance != null && ItemAmountDialog.Instance.IsOpen)
+            ItemAmountDialog.Instance.Close();
+
+        if (BoxInventoryUI.Instance != null && BoxInventoryUI.Instance.IsOpen)
+            BoxInventoryUI.Instance.Close();
+
+        if (InventoryUI.Instance != null && InventoryUI.IsInventoryOpen)
+            InventoryUI.Instance.ToggleInventory();
+
+        InventoryUI.ClearSharedDragState();
+    }
+
+    private InventorySaveData CapturePlayerInventory()
+    {
+        InventorySaveData save = new InventorySaveData();
+
+        if (InventoryUI.Instance == null)
+        {
+            save.items = Array.Empty<InventoryItemSaveData>();
+            return save;
+        }
+
+        List<InventoryItemSaveData> result = new List<InventoryItemSaveData>();
+
+        foreach (InventoryItemInstance item in InventoryUI.Instance.GetAllInstancesDistinct())
+        {
+            InventoryItemSaveData itemSave = CreateItemSaveData(item);
+
+            if (itemSave == null)
+                continue;
+
+            itemSave.slotIndex = InventoryUI.Instance.GetStartSlotIndexForSave(item);
+            result.Add(itemSave);
+        }
+
+        save.items = result.ToArray();
+        return save;
+    }
+
+    private BoxSaveData[] CaptureBoxes()
+    {
+        WorldBoxInventory[] boxes = FindObjectsByType<WorldBoxInventory>(FindObjectsSortMode.None);
+        List<BoxSaveData> result = new List<BoxSaveData>();
+
+        foreach (WorldBoxInventory box in boxes)
+        {
+            if (box == null)
+                continue;
+
+            QuickSaveEntity entity = box.GetComponent<QuickSaveEntity>();
+
+            if (entity == null)
+            {
+                Debug.LogWarning($"[QuickSave] Box '{box.name}' has no QuickSaveEntity. Skipping box save.");
+                continue;
+            }
+
+            List<InventoryItemSaveData> items = new List<InventoryItemSaveData>();
+
+            foreach (InventoryItemInstance item in box.GetItems())
+            {
+                InventoryItemSaveData itemSave = CreateItemSaveData(item);
+
+                if (itemSave == null)
+                    continue;
+
+                itemSave.slotIndex = -1;
+                items.Add(itemSave);
+            }
+
+            result.Add(new BoxSaveData
+            {
+                saveId = entity.SaveId,
+                cash = box.cash,
+                items = items.ToArray()
+            });
+        }
+
+        return result.ToArray();
+    }
+
+    private InventoryItemSaveData CreateItemSaveData(InventoryItemInstance item)
+    {
+        if (item == null || item.data == null)
+            return null;
+
+        return new InventoryItemSaveData
+        {
+            itemKey = GetItemKey(item.data),
+
+            count = Mathf.Max(1, item.count),
+            currentAmmo = item.currentAmmo,
+            totalAmmo = item.totalAmmo,
+
+            rotated = item.rotated,
+
+            hasBankCardMeta = item.hasBankCardMeta,
+            bankCard = item.bankCard,
+
+            slotIndex = -1
+        };
+    }
+
+    private string GetItemKey(InventoryItemData data)
+    {
+        if (data == null)
+            return "";
+
+        // Najstabilniej po nazwie assetu ScriptableObject.
+        return data.name;
+    }
+
+    private void RestorePlayerInventory(InventorySaveData save)
+    {
+        if (InventoryUI.Instance == null || save == null)
+            return;
+
+        InventoryUI.Instance.ClearInventoryForQuickLoad();
+
+        if (save.items == null)
+            return;
+
+        foreach (InventoryItemSaveData itemSave in save.items)
+        {
+            InventoryItemInstance item = CreateItemFromSave(itemSave);
+
+            if (item == null)
+                continue;
+
+            bool placed = false;
+
+            if (itemSave.slotIndex >= 0)
+                placed = InventoryUI.Instance.TryAddItemAtForQuickLoad(itemSave.slotIndex, item);
+
+            if (!placed)
+                InventoryUI.Instance.TryAddItem(item);
+        }
+
+        InventoryUI.Instance.RefreshAfterQuickLoad();
+    }
+
+    private void RestoreBoxes(BoxSaveData[] savedBoxes)
+    {
+        if (savedBoxes == null)
+            return;
+
+        foreach (BoxSaveData saved in savedBoxes)
+        {
+            if (saved == null || string.IsNullOrWhiteSpace(saved.saveId))
+                continue;
+
+            Transform t = FindEntityBySaveId(saved.saveId);
+
+            if (t == null)
+                continue;
+
+            WorldBoxInventory box = t.GetComponent<WorldBoxInventory>();
+
+            if (box == null)
+                box = t.GetComponentInChildren<WorldBoxInventory>(true);
+
+            if (box == null)
+                continue;
+
+            List<InventoryItemInstance> restoredItems = new List<InventoryItemInstance>();
+
+            if (saved.items != null)
+            {
+                foreach (InventoryItemSaveData itemSave in saved.items)
+                {
+                    InventoryItemInstance item = CreateItemFromSave(itemSave);
+
+                    if (item != null)
+                        restoredItems.Add(item);
+                }
+            }
+
+            box.ReplaceContentForQuickLoad(restoredItems, saved.cash);
+        }
+    }
+
+    private InventoryItemInstance CreateItemFromSave(InventoryItemSaveData save)
+    {
+        if (save == null)
+            return null;
+
+        InventoryItemData data = ResolveItemData(save.itemKey);
+
+        if (data == null)
+        {
+            Debug.LogWarning($"[QuickLoad] Inventory item not found: {save.itemKey}");
+            return null;
+        }
+
+        InventoryItemInstance item;
+
+        if (save.hasBankCardMeta && data is BankCardItemData cardData)
+            item = new InventoryItemInstance(cardData, save.bankCard);
+        else
+            item = new InventoryItemInstance(data, save.currentAmmo, save.totalAmmo);
+
+        item.count = Mathf.Max(1, save.count);
+        item.rotated = save.rotated;
+
+        return item;
+    }
+
+    private InventoryItemData ResolveItemData(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return null;
+
+        if (inventoryItemDatabase != null)
+        {
+            for (int i = 0; i < inventoryItemDatabase.Length; i++)
+            {
+                InventoryItemData data = inventoryItemDatabase[i];
+
+                if (data == null)
+                    continue;
+
+                if (data.name == key)
+                    return data;
+            }
+        }
+
+        return Resources.Load<InventoryItemData>($"Inventory/{key}");
+    }   
 }

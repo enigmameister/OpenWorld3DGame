@@ -2,7 +2,7 @@
 using UnityEngine.UI;
 using System.Collections;
 
-public class CarInteraction : MonoBehaviour
+public class CarInteraction : MonoBehaviour, IPressable, IInteractionPromptOverride
 {
     [Header("Vehicle Modules")]
     [SerializeField] private VehicleHudController hudController;
@@ -25,7 +25,6 @@ public class CarInteraction : MonoBehaviour
     public GameObject loadingBarRoot;
     public Image loadingBarFill;
 
-    private bool isPlayerNearby;
     private bool isInCar;
     private bool isBusy;
 
@@ -54,6 +53,18 @@ public class CarInteraction : MonoBehaviour
 
     public Transform VehicleExitPoint => exitPoint != null ? exitPoint : transform;
     private PlayerStats PlayerStatsRef => occupantController != null ? occupantController.PlayerStats : null;
+
+    public bool HidePrompt => true;
+    public string Label
+    {
+        get
+        {
+            if (driveController != null && driveController.IsPermanentlyDestroyed())
+                return "Pojazd zniszczony";
+
+            return isInCar ? "Wyjdź z pojazdu" : "Wsiądź do pojazdu";
+        }
+    }
 
     void Start()
     {
@@ -118,19 +129,13 @@ public class CarInteraction : MonoBehaviour
         if (InventoryUI.IsInventoryOpen) return;
         if (DevConsole.IsOpen) return;
 
-        if (PlayerInputHandler.Instance.InteractPressedThisFrame)
+        if (isInCar && PlayerInputHandler.Instance.InteractPressedThisFrame)
         {
-            if (!isInCar && isPlayerNearby)
-            {
-                StartCoroutine(EnterCarRoutine());
-            }
-            else if (isInCar)
-            {
-                if (raceBridge != null && raceBridge.BlocksVehicleExit)
-                    return;
+            if (raceBridge != null && raceBridge.BlocksVehicleExit)
+                return;
 
-                StartCoroutine(ExitCarRoutine());
-            }
+            StartCoroutine(ExitCarRoutine());
+            return;
         }
 
         if (isInCar && PlayerInputHandler.Instance.SwitchCameraPressedThisFrame)
@@ -324,18 +329,6 @@ public class CarInteraction : MonoBehaviour
         loadingBarRoot.SetActive(false);
     }
 
-    void OnTriggerEnter(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            isPlayerNearby = true;
-    }
-
-    void OnTriggerExit(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            isPlayerNearby = false;
-    }
-
     public VehicleCameraSnapshot GetCameraSnapshot()
     {
         if (cameraController != null)
@@ -348,5 +341,42 @@ public class CarInteraction : MonoBehaviour
     {
         if (cameraController != null)
             cameraController.ApplySnapshot(snapshot);
+    }
+
+    public void Press()
+    {
+        TryEnterFromInteraction();
+    }
+
+    public bool TryEnterFromInteraction()
+    {
+        if (isInCar)
+            return false;
+
+        if (!CanUseVehicleInteraction())
+            return false;
+
+        StartCoroutine(EnterCarRoutine());
+        return true;
+    }
+
+    private bool CanUseVehicleInteraction()
+    {
+        if (PlayerStatsRef != null && PlayerStatsRef.IsDead)
+            return false;
+
+        if (isBusy)
+            return false;
+
+        if (InventoryUI.IsInventoryOpen)
+            return false;
+
+        if (DevConsole.IsOpen)
+            return false;
+
+        if (driveController != null && driveController.IsPermanentlyDestroyed())
+            return false;
+
+        return true;
     }
 }

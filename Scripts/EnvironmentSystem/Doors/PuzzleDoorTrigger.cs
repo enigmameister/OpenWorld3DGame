@@ -4,7 +4,7 @@ using System.Linq;
 using TMPro;
 using System.Collections.Generic;
 
-public class PuzzleDoorTrigger : MonoBehaviour
+public class PuzzleDoorTrigger : MonoBehaviour, IPressable
 {
     public Animator doorAnimator;
     public Light statusLight;
@@ -19,7 +19,6 @@ public class PuzzleDoorTrigger : MonoBehaviour
 
     public DropSlot[] answerSlots;
 
-    private bool playerInZone = false;
     private bool puzzleSolved = false;
 
     public Slider loadingBar;
@@ -47,6 +46,10 @@ public class PuzzleDoorTrigger : MonoBehaviour
 
     private readonly string[] stopCodons = new string[] { "UAA", "UAG", "UGA" };
     private List<string> generatedCodonSequence;
+
+    [SerializeField] private string label = "Użyj panelu puzzli";
+
+    public string Label => puzzleSolved ? "Puzzle rozwiązane" : label;
     void Start()
     {
         puzzleCanvas.SetActive(false);
@@ -63,16 +66,10 @@ public class PuzzleDoorTrigger : MonoBehaviour
 
     void Update()
     {
-        if (playerInZone && !puzzleSolved && PlayerInputHandler.Instance.InteractPressedThisFrame)
-        {
-            OpenPuzzleUI();
-        }
-
         if (!answerIsCorrect && messageText.gameObject.activeSelf && Input.GetMouseButtonDown(0))
         {
             messageText.gameObject.SetActive(false);
         }
-
     }
 
     private void UpdateInstructionText()
@@ -86,6 +83,13 @@ public class PuzzleDoorTrigger : MonoBehaviour
             "Przeciągnij kodony do pól odpowiedzi, a następnie naciśnij <b>CHECK</b>";
     }
 
+    public void Press()
+    {
+        if (puzzleSolved)
+            return;
+
+        OpenPuzzleUI();
+    }
 
     private void GenerateCodonTiles(int count)
     {
@@ -333,18 +337,6 @@ public class PuzzleDoorTrigger : MonoBehaviour
                 codon.transform.localPosition = Vector3.zero;
             }
         }
-    }
-
-    private void OnTriggerEnter(Collider other) 
-    {
-        if (other.CompareTag("Player"))
-            playerInZone = true;
-    }
-
-    private void OnTriggerExit(Collider other)
-    {
-        if (other.CompareTag("Player"))
-            playerInZone = false;
     }
 
     private System.Collections.IEnumerator LoadingCheck(string[] answer)

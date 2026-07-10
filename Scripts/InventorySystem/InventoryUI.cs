@@ -14,7 +14,6 @@ using UnityEngine.InputSystem;
 
 public class InventoryUI : MonoBehaviour, IInventorySlotOwner
 {
-
     private InventoryGridController grid;
     private InventoryDragController dragController;
     private InventoryDropService dropService;
@@ -123,10 +122,8 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         InitControllers();
         InitButtons();
     }
-
     private void Update()
     {
-        // ✅ ESC ma priorytet (działa nawet jeśli ATM jest open)
         bool escPressed =
 #if ENABLE_INPUT_SYSTEM
 
@@ -166,11 +163,9 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             return;
         }
 
-        // dopiero po ESC blokuj resztę logiki
         if (atmUI != null && atmUI.IsOpen)
             return;
 
-        // ✅ Toggle Inventory na "I" (z Twojego input handlera)
         if (!DevConsole.IsOpen && PlayerInputHandler.Instance != null && PlayerInputHandler.Instance.InventoryPressed)
             ToggleInventory();
 
@@ -186,8 +181,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         {
             InventorySlot hoverSlot = GetInventorySlotUnderMouse();
 
-            // Ważne: InventoryUI ma pokazywać preview tylko na swoich slotach,
-            // ale źródłem draga może być InventoryUI albo BoxInventoryUI.
             bool hoverInventorySlot =
                 hoverSlot != null &&
                 hoverSlot.owner == this;
@@ -1229,10 +1222,6 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
             {
                 if (!CanReceiveWeaponFromBox(draggedItem))
                 {
-                    HideDragGhost();
-                    ClearSharedDragState();
-                    draggedSlot = null;
-
                     BoxInventoryUI.Instance?.ShowTransferMessagePublic("ALREADY WEAPON THIS TYPE");
                     return;
                 }
@@ -2551,6 +2540,77 @@ public class InventoryUI : MonoBehaviour, IInventorySlotOwner
         RefreshOccupiedHighlights();
 
         return true;
+    }
+
+    public int GetStartSlotIndexForSave(InventoryItemInstance item)
+    {
+        InventorySlot slot = GetTopLeftSlotForItem(item);
+        return slot != null ? slot.slotIndex : -1;
+    }
+
+    public bool TryAddItemAtForQuickLoad(int slotIndex, InventoryItemInstance item)
+    {
+        if (item == null || item.data == null)
+            return false;
+
+        if (grid == null)
+            InitGridController();
+
+        if (grid == null)
+            return false;
+
+        if (!grid.CanFitShape(
+                slotIndex,
+                grid.GetItemWidth(item),
+                grid.GetItemHeight(item)))
+        {
+            return false;
+        }
+
+        bool placed = TryAddItemAt(slotIndex, item);
+
+        if (placed && IsCombatItemData(item.data))
+        {
+            if (item.data is GrenadeItemData)
+            {
+                if (weaponBridge == null)
+                    InitWeaponBridge();
+
+                weaponBridge?.SyncGrenadeSlotFromInventory(item.data);
+            }
+            else
+            {
+                RegisterWeaponFromBoxTransfer(item);
+            }
+        }
+
+        return placed;
+    }
+
+    public void ClearInventoryForQuickLoad()
+    {
+        if (grid == null)
+            InitGridController();
+
+        grid?.ClearAllSlotVisuals();
+
+        draggedItem = null;
+        draggedSlot = null;
+        DragSourceOwner = null;
+        DragSourceSlot = null;
+        IsDraggingInventoryItem = false;
+
+        if (dragGhost != null)
+            dragGhost.gameObject.SetActive(false);
+    }
+
+    public void RefreshAfterQuickLoad()
+    {
+        RebuildSlotVisualsFromCurrentState();
+        RebuildSlotsLayout();
+        RefreshOccupiedHighlights();
+        RefreshCashUI();
+        RefreshGunUIFromWeaponManager();
     }
 
     // =====================================================

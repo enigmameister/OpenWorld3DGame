@@ -1,6 +1,7 @@
-// IPressable.cs
 public interface IPressable
 {
-    void Press();              // co ma siê staæ po naciœniêciu
-    string Label { get; }      // opcjonalnie do debugów / podpowiedzi
+    void Press();             
+    string Label { get; }      
 }
+
+// Interface for inform usable/pressable object e.g doors/pickup/interaction

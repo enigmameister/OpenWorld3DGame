@@ -67,10 +67,30 @@ public class WorldBoxInventory : MonoBehaviour, IPressable
 
         if (BoxInventoryUI.Instance == null)
         {
-            Debug.LogWarning("[WorldBoxInventory] Brak BoxInventoryUI na scenie.");
+            Debug.LogWarning("[WorldBoxInventory] Brak BoxInventoryUI on scene.");
             return;
         }
 
         BoxInventoryUI.Instance.Open(this);
+    }
+
+    public void ReplaceContentForQuickLoad(List<InventoryItemInstance> restoredItems, int restoredCash)
+    {
+        InitOnce();
+
+        items.Clear();
+
+        if (restoredItems != null)
+        {
+            foreach (InventoryItemInstance item in restoredItems)
+            {
+                if (item == null || item.data == null)
+                    continue;
+
+                items.Add(item);
+            }
+        }
+
+        cash = Mathf.Max(0, restoredCash);
     }
 }

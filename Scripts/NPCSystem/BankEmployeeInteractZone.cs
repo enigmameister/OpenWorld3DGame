@@ -137,8 +137,8 @@ public class BankEmployeeInteractZone : MonoBehaviour
         }
 
         bool interactPressed =
-            (PlayerInputHandler.Instance != null && PlayerInputHandler.Instance.InteractPressedThisFrame) ||
-            Input.GetKeyDown(KeyCode.E);
+            PlayerInputHandler.Instance != null &&
+            PlayerInputHandler.Instance.InteractPressedThisFrame;
 
         if (!interactPressed)
             return;

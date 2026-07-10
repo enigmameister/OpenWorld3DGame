@@ -1,10 +1,14 @@
 ﻿using TMPro;
 using UnityEngine;
 
-public class MatrixPuzzleTrigger : MonoBehaviour
+public class MatrixPuzzleTrigger : MonoBehaviour, IPressable
 {
-    public GameObject matrixCanvas; // Canvas z MatrixPuzzleController
-    private bool playerInRange = false;
+    [Header("Controller")]
+    [SerializeField] private MatrixPuzzleController controller;
+
+    [Header("World Label")]
+    [SerializeField] private string label = "Użyj panelu Matrix";
+
     private bool puzzleSolved = false;
 
     [Header("Status Light")]
@@ -17,38 +21,34 @@ public class MatrixPuzzleTrigger : MonoBehaviour
     public TextMeshPro taskLabel;
     public TextMeshPro resultLabel;
 
-    void Update()
-    {
-        if (statusLight != null)
-        {
-            if (!puzzleSolved)
-            {
-                float t = Mathf.PingPong(Time.time * flashSpeed, 1f);
-                statusLight.color = Color.Lerp(flashingColorA, flashingColorB, t);
-            }
-            else
-            {
-                // ✳️ Nadaj raz tylko jeśli światło ma inny kolor niż docelowy
-                if (statusLight.color != solvedColor)
-                    statusLight.color = solvedColor;
-            }
-        }
+    public string Label => puzzleSolved ? "Panel rozwiązany" : label;
 
-        if (playerInRange && !puzzleSolved && Input.GetKeyDown(KeyCode.E))
-        {
-            OpenPuzzle();
-        }
-    }
-    void OnTriggerEnter(Collider other)
+    private void Awake()
     {
-        if (other.CompareTag("Player"))
-            playerInRange = true;
+        if (controller == null)
+            controller = GetComponentInParent<MatrixPuzzleController>();
+
+        if (controller == null)
+            controller = GetComponentInChildren<MatrixPuzzleController>(true);
     }
 
-    void OnTriggerExit(Collider other)
+    private void Update()
     {
-        if (other.CompareTag("Player"))
-            playerInRange = false;
+        UpdateStatusLight();
+    }
+
+    public void Press()
+    {
+        if (puzzleSolved)
+            return;
+
+        if (controller == null)
+        {
+            Debug.LogWarning("[MatrixPuzzleTrigger] Brak MatrixPuzzleController.", this);
+            return;
+        }
+
+        controller.OpenPuzzleUI();
     }
 
     public void MarkPuzzleAsSolved()
@@ -56,44 +56,7 @@ public class MatrixPuzzleTrigger : MonoBehaviour
         puzzleSolved = true;
 
         if (statusLight != null)
-        {
             statusLight.color = solvedColor;
-        }
-    }
-
-    void OpenPuzzle()
-    {
-        if (puzzleSolved) return;
-
-        MatrixPuzzleController controller = matrixCanvas.GetComponent<MatrixPuzzleController>();
-        if (controller != null)
-            controller.OpenPuzzleUI();
-
-        matrixCanvas.SetActive(true);
-        Time.timeScale = 0f;
-
-        // Zablokuj sterowanie gracza (opcjonalnie)
-        PlayerMovement.IsMovementLocked = true;
-        MouseLook.IsLookLocked = true;
-
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
-    }
-
-    public void ExitPuzzle()
-    {
-        MatrixPuzzleController controller = matrixCanvas.GetComponent<MatrixPuzzleController>();
-        if (controller != null)
-            controller.ClosePuzzleUI();
-
-        matrixCanvas.SetActive(false);
-        Time.timeScale = 1f;
-
-        PlayerMovement.IsMovementLocked = false;
-        MouseLook.IsLookLocked = false;
-
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
     }
 
     public void SetSolvedLabel(int codeIndex, int determinant)
@@ -105,4 +68,20 @@ public class MatrixPuzzleTrigger : MonoBehaviour
             resultLabel.text = $"[{determinant}]";
     }
 
+    private void UpdateStatusLight()
+    {
+        if (statusLight == null)
+            return;
+
+        if (!puzzleSolved)
+        {
+            float t = Mathf.PingPong(Time.time * flashSpeed, 1f);
+            statusLight.color = Color.Lerp(flashingColorA, flashingColorB, t);
+        }
+        else
+        {
+            if (statusLight.color != solvedColor)
+                statusLight.color = solvedColor;
+        }
+    }
 }
