@@ -1,0 +1,202 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: CityHall_CitizenId
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: Good morning. Do you have a registered Citizen ID appointment?
+    options:
+    - playerText: Yes, i have a registred visit.
+      nextNodeId: '@event'
+      debugEvent: CHECK_CITIZEN_ID_VISIT
+    endAfterNpcLine: 0
+  - id: checking
+    npcText: Please wait while I check your appointment.
+    options: []
+    endAfterNpcLine: 1
+  - id: no_registration
+    npcText: 'I cannot find an active Citizen ID appointment.
+
+      Please register
+      your visit at reception first.'
+    options:
+    - playerText: Understood.
+      nextNodeId: '@event'
+      debugEvent: 
+    - playerText: 'Check again please, iam sure i registered '
+      nextNodeId: '@end'
+      debugEvent: CHECK_CITIZEN_ID_VISIT
+    endAfterNpcLine: 0
+  - id: registered
+    npcText: 'Your appointment has been confirmed.
+
+      What would you like to
+      do ?'
+    options:
+    - playerText: I would like to apply for a Citizen ID
+      nextNodeId: '@event'
+      debugEvent: BEGIN_CITIZEN_ID_APPLICATION
+    - playerText: I would like to report a lost Citizen ID
+      nextNodeId: '@event'
+      debugEvent: REPORT_LOST_CITIZEN_ID
+    - playerText: Nothing, i need leave out.
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: application_intro
+    npcText: 'Before we begin, I need to confirm that you are eligible to apply.
+
+      
+
+      You
+      must not currently be wanted by the authorities.
+
+      You will also need
+      to provide your name, select a document variant,
+
+      and have your photograph
+      taken.'
+    options:
+    - playerText: I understand, start the application
+      nextNodeId: '@event'
+      debugEvent: OPEN_CITIZEN_ID_APPLICATION
+    - playerText: Back
+      nextNodeId: registred
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: already_has_citizen_id
+    npcText: 'Our records show that you already have an active Citizen ID.
+
+      
+
+      If
+      your document has been lost, stolen, or destroyed,
+
+      you should report
+      its loss instead of submitting a new application.'
+    options:
+    - playerText: Report a lost Citizen ID
+      nextNodeId: '@event'
+      debugEvent: REPORT_LOST_CITIZEN_ID
+    - playerText: Back
+      nextNodeId: registred
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: no_citizen_id_to_report
+    npcText: 'I cannot find an issued Citizen ID under your details.
+
+      
+
+      There
+      is no active document that can be reported as lost.
+
+      You may submit
+      a new Citizen ID application instead.'
+    options:
+    - playerText: "Apply for a Citizen ID\t"
+      nextNodeId: '@event'
+      debugEvent: BEGIN_CITIZEN_ID_APPLICATION
+    - playerText: Back
+      nextNodeId: registered
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: lost_id_intro
+    npcText: 'Reporting your Citizen ID as lost will invalidate the current document.
+
+      
+
+      You
+      will then be able to apply for a replacement document.
+
+      The previous
+      copy will no longer be accepted by government services.'
+    options:
+    - playerText: Continue
+      nextNodeId: application_not_ready
+      debugEvent: 
+    - playerText: Cancel
+      nextNodeId: registred
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: application_ready
+    npcText: 'Your Citizen ID is ready for collection.
+
+      Please proceed to
+      the Document Pickup Office.'
+    options:
+    - playerText: Thanks you very much, have a nice day.
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: application_not_ready
+    npcText: 'The appointment has been verified successfully.
+
+      
+
+      The
+      Citizen ID application form will be available
+
+      after the application
+      terminal has been initialized.'
+    options:
+    - playerText: Back
+      nextNodeId: registred
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: application_already_exists
+    npcText: 'You already have an active Citizen ID application.
+
+      Please wait
+      until your document is ready for pickup.'
+    options:
+    - playerText: Understood.
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: application_submitted
+    npcText: 'Your application has been submitted successfully.
+
+      Your Citizen
+      ID will be available for collection tomorrow from 7:00 AM at the Document Pickup
+      Office.'
+    options:
+    - playerText: "Thank you very much.\t"
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: photo_required
+    npcText: 'Your application form has been saved.
+
+      Please stand in the designated
+      photo area.
+
+      Remain there while I prepare the camera.'
+    options:
+    - playerText: I understand.
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: photo_completed
+    npcText: 'Your photograph has been received successfully.
+
+      I can now complete
+      and submit your Citizen ID application.'
+    options:
+    - playerText: Finalize the application
+      nextNodeId: '@event'
+      debugEvent: FINALIZE_CITIZEN_ID_APPLICATION
+    - playerText: Leave
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  startNodeId: start

@@ -25,6 +25,7 @@ public class PickupInteractor : MonoBehaviour
     private WeaponManager wm;
     private bool IsTPP => CameraSwitcher.Instance != null && CameraSwitcher.Instance.IsTPPActive;
     private IHoldInteractable currentHoldInteractable;
+    private ElevatorButton currentElevatorButtonHover;
 
     void Start()
     {
@@ -34,12 +35,27 @@ public class PickupInteractor : MonoBehaviour
     void LateUpdate()
     {
         var cam = camOverride ? camOverride : Camera.main;
-        if (!cam) return;
-
-        if (InventoryUI.IsInventoryOpen) return;
-
-        if (!cam || PlayerInputHandler.Instance == null || wm == null)
+        if (!cam)
+        {
+            ClearElevatorButtonHover();
             return;
+        }
+
+        if (InventoryUI.IsInventoryOpen)
+        {
+            StopCurrentHold();
+            ClearElevatorButtonHover();
+            HideInteractText();
+            return;
+        }
+
+        if (PlayerInputHandler.Instance == null || wm == null)
+        {
+            StopCurrentHold();
+            ClearElevatorButtonHover();
+            HideInteractText();
+            return;
+        }
 
         float currentPickupRange = IsTPP ? 5f : 2.5f;
         pickupRange = currentPickupRange;
@@ -56,14 +72,29 @@ public class PickupInteractor : MonoBehaviour
 
             if (Physics.Raycast(origin, (targetPos - origin).normalized, distance, obstacleLayer, QueryTriggerInteraction.Ignore))
             {
+                StopCurrentHold();
+                ClearElevatorButtonHover();
                 HideInteractText();
                 return;
             }
 
-            // ===== 1) OBSŁUGA IPressable (np. CashPickup) =====
+            // ===== 1) OBSŁUGA IPressable =====
             var pressable = hit.collider.GetComponentInParent<IPressable>();
             if (pressable != null)
             {
+                var elevatorButton = hit.collider.GetComponentInParent<ElevatorButton>();
+
+                if (currentElevatorButtonHover != elevatorButton)
+                {
+                    if (currentElevatorButtonHover != null)
+                        currentElevatorButtonHover.SetHover(false);
+
+                    currentElevatorButtonHover = elevatorButton;
+
+                    if (currentElevatorButtonHover != null)
+                        currentElevatorButtonHover.SetHover(true);
+                }
+
                 var promptOverride = hit.collider.GetComponentInParent<IInteractionPromptOverride>();
                 var holdInteractable = hit.collider.GetComponentInParent<IHoldInteractable>();
 
@@ -89,10 +120,15 @@ public class PickupInteractor : MonoBehaviour
                 return;
             }
 
-            // ===== 2) OBSŁUGA WeaponPickup (jak było) =====
+            // Jeśli trafiliśmy coś, ale to nie jest IPressable,
+            // zdejmij hover z przycisku windy.
+            ClearElevatorButtonHover();
+
+            // ===== 2) OBSŁUGA WeaponPickup =====
             WeaponPickup pickup = hit.collider.GetComponentInParent<WeaponPickup>();
             if (pickup == null)
             {
+                StopCurrentHold();
                 HideInteractText();
                 return;
             }
@@ -101,13 +137,13 @@ public class PickupInteractor : MonoBehaviour
             ShowInteractText(pickup.itemData.itemName, pickup);
 
             if (PlayerInputHandler.Instance.InteractPressedThisFrame)
-            {
                 pickup.TryPickUpFromExternalRay();
-            }
+
             return;
         }
 
         StopCurrentHold();
+        ClearElevatorButtonHover();
         HideInteractText();
     }
 
@@ -203,5 +239,14 @@ public class PickupInteractor : MonoBehaviour
 
         currentHoldInteractable.HoldEnded();
         currentHoldInteractable = null;
+    }
+
+    private void ClearElevatorButtonHover()
+    {
+        if (currentElevatorButtonHover == null)
+            return;
+
+        currentElevatorButtonHover.SetHover(false);
+        currentElevatorButtonHover = null;
     }
 }

@@ -17,7 +17,6 @@ public struct BankCardMeta
     public long activateAt;   // timestamp/“koniec doby” na później (Pending)
 }
 
-
 public class InventoryItemInstance
 {
     public string id { get; private set; } = System.Guid.NewGuid().ToString();
@@ -31,6 +30,9 @@ public class InventoryItemInstance
     public BankCardMeta bankCard;
     public bool hasBankCardMeta;
 
+    public bool hasCitizenIdMeta;
+    public CitizenIdMeta citizenId;
+
     public bool rotated;
 
     public bool CanRotate
@@ -39,6 +41,17 @@ public class InventoryItemInstance
         {
             return data != null && data.slotSize > 1;
         }
+    }
+
+    public InventoryItemInstance(
+    InventoryItemData data,
+    string restoredInstanceId,
+    int currentAmmo = -1,
+    int totalAmmo = -1)
+    : this(data, currentAmmo, totalAmmo)
+    {
+        if (!string.IsNullOrWhiteSpace(restoredInstanceId))
+            id = restoredInstanceId;
     }
 
     public int WidthSlots
@@ -105,19 +118,24 @@ public class InventoryItemInstance
         }
     }
 
-    public InventoryItemInstance(BankCardItemData data, BankCardMeta meta)
-    : this((InventoryItemData)data)
+    public InventoryItemInstance(
+        BankCardItemData data,
+        BankCardMeta meta)
+        : this((InventoryItemData)data)
     {
         bankCard = meta;
         hasBankCardMeta = true;
     }
 
-    /// <summary>
-    /// 
-    /// </summary>
-    /// <param></param>
-    /// <returns></returns>
-    /// 
+    public InventoryItemInstance(
+        CitizenIdItemData data,
+        CitizenIdMeta meta)
+        : this((InventoryItemData)data)
+    {
+        citizenId = meta;
+        hasCitizenIdMeta = true;
+        count = 1;
+    }
 
     public override bool Equals(object obj)
     {

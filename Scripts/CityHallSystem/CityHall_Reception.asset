@@ -1,0 +1,249 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: CityHall_Reception
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: Welcome to City Hall, how i can help you ?
+    options:
+    - playerText: What can i do here ?
+      nextNodeId: information
+      debugEvent: 
+    - playerText: I would register a visit.
+      nextNodeId: register_menu
+      debugEvent: 
+    - playerText: Amm.. nothing..
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: information
+    npcText: 'You can register visits for Citizen ID services, licences,
+
+      the
+      Lost & Found Office, document pickup, and insurance services.
+
+      What would
+      you like to know?'
+    options:
+    - playerText: What is a Citizen ID ?
+      nextNodeId: info_citizen_id
+      debugEvent: 
+    - playerText: How does the lost & found office work ?
+      nextNodeId: info_lost_found
+      debugEvent: 
+    - playerText: What are licences for ?
+      nextNodeId: info_licences
+      debugEvent: 
+    - playerText: What is the document pickup room ?
+      nextNodeId: info_file_pickup
+      debugEvent: 
+    - playerText: What does insurances office offer ?
+      nextNodeId: info_insurance
+      debugEvent: 
+    - playerText: Back
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: register_menu
+    npcText: "Whats the purpose of your visit ?\t"
+    options:
+    - playerText: Citizen ID
+      nextNodeId: '@event'
+      debugEvent: REGISTER_CITIZEN_ID_VISIT
+    - playerText: Licensing
+      nextNodeId: not_available
+      debugEvent: 
+    - playerText: Lost & Found Office
+      nextNodeId: not_available
+      debugEvent: 
+    - playerText: Pickup ready files
+      nextNodeId: '@event'
+      debugEvent: REGISTER_FILE_PICKUP_VISIT
+    - playerText: Back
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: visit_registered
+    npcText: 'Your visit has been registered.
+
+      Please proceed to the office.'
+    options:
+    - playerText: Thanks
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: visit_already_registered
+    npcText: 'You already have a registered visit.
+
+      Please proceed to the
+      appropriate office.'
+    options:
+    - playerText: Thanks
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: other_visit_active
+    npcText: 'Sorry, you already have another active visit.
+
+      Cancel it before
+      registering a new one.'
+    options:
+    - playerText: Understand
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: not_available
+    npcText: This service is not available yet.
+    options:
+    - playerText: "Back\t"
+      nextNodeId: register_menu
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: info_citizen_id
+    npcText: 'A Citizen ID grants you official resident status and serves as your
+      personal identifier.
+
+
+
+      It allows you to open bank accounts, make authorized
+      purchases,
+
+      obtain insurance, purchase property, and access other government
+      services.
+
+
+
+      You cannot apply for a Citizen ID while you are wanted by
+      the authorities.'
+    options:
+    - playerText: Ask about something else
+      nextNodeId: information
+      debugEvent: 
+    - playerText: Register a Citizen ID Visit
+      nextNodeId: '@event'
+      debugEvent: REGISTER_CITIZEN_ID_VISIT
+    - playerText: Back to main menu
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: info_licences
+    npcText: 'Licences authorize you to perform activities that require official
+      qualifications.
+
+
+
+      They include standard vehicle driving privileges as
+      well as specialized certifications.
+
+
+
+      A valid Citizen ID is required
+      before you can apply.
+
+      Most licence applications conclude with a practical
+      examination.'
+    options:
+    - playerText: Ask about something else
+      nextNodeId: information
+      debugEvent: 
+    - playerText: Register a license visit
+      nextNodeId: not_available
+      debugEvent: 
+    - playerText: Back to main menu
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: info_lost_found
+    npcText: 'The Lost & Found Office handles reported missing items and recovered
+      property.
+
+
+
+      You may report an item you have lost or return an item you
+      have found.
+
+
+
+      Under the city recovery program, the government covers
+      the cost
+
+      of returning every properly reported item to its owner.'
+    options:
+    - playerText: Ask about something else
+      nextNodeId: information
+      debugEvent: 
+    - playerText: Register a lost & found visit
+      nextNodeId: not_available
+      debugEvent: 
+    - playerText: Back to main menu
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: info_file_pickup
+    npcText: 'The Document Pickup Office is located to the left of the Citizen ID
+      room.
+
+
+
+      All completed documents issued by City Hall can be collected
+      there.
+
+
+
+      Documents are normally available from 7:00 AM on the day after
+
+      your
+      application has been completed.'
+    options:
+    - playerText: Ask about sometheing else
+      nextNodeId: information
+      debugEvent: 
+    - playerText: Register a document pickup visit
+      nextNodeId: not_available
+      debugEvent: 
+    - playerText: Back to main menu
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: info_insurance
+    npcText: 'The Insurance Office offers protection plans for authorized vehicles
+
+      and
+      personal property.
+
+
+
+      Vehicle insurance allows a destroyed registered
+      vehicle to be restored
+
+      with its purchased specifications at a selected
+      recovery location.
+
+
+
+      Personal insurance may also protect the money and
+      items carried
+
+      in your inventory when you die.'
+    options:
+    - playerText: Ask about something else
+      nextNodeId: information
+      debugEvent: 
+    - playerText: Register an insurance visit
+      nextNodeId: not_available
+      debugEvent: 
+    - playerText: Back to main menu
+      nextNodeId: start
+      debugEvent: 
+    endAfterNpcLine: 0
+  startNodeId: start

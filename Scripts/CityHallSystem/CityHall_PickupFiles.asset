@@ -1,0 +1,96 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b957bb3dd05460a4db7af93ce53c5bfb, type: 3}
+  m_Name: CityHall_PickupFiles
+  m_EditorClassIdentifier: Assembly-CSharp::DialogueGraph
+  nodes:
+  - id: start
+    npcText: 'Good morning. Do you have a registered appointment
+
+      to collect
+      a document?'
+    options:
+    - playerText: "Yes, I have a registered visit.\t"
+      nextNodeId: '@event'
+      debugEvent: CHECK_FILE_PICKUP_VISIT
+    - playerText: No, not yet.
+      nextNodeId: no_registration
+      debugEvent: 
+    - playerText: I need to leave..
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: checking
+    npcText: Please wait while I check your appointment and available documents.
+    options: []
+    endAfterNpcLine: 0
+  - id: registered
+    npcText: 'Your appointment has been confirmed.
+
+      Please wait while I retrieve
+      your documents.'
+    options:
+    - playerText: 
+      nextNodeId: '@event'
+      debugEvent: BEGIN_FILE_PICKUP_SEARCH
+    endAfterNpcLine: 1
+  - id: no_registration
+    npcText: 'You do not have a registered appointment for document collection.
+
+      Please
+      register your visit at reception first.'
+    options:
+    - playerText: Understood.
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: nothing_ready
+    npcText: 'There are currently no documents waiting for collection
+
+      under
+      your profile.'
+    options:
+    - playerText: Ok.
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: application_not_ready
+    npcText: 'Your Citizen ID application is still being processed.
+
+      Please
+      return when the document is ready for collection.'
+    options:
+    - playerText: Understood.
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: document_ready
+    npcText: 'Your Citizen ID is ready for collection.
+
+      Please make sure you
+      have one free inventory slot.'
+    options:
+    - playerText: Collect Citizen ID
+      nextNodeId: '@event'
+      debugEvent: COLLECT_CITIZEN_ID
+    - playerText: I will return later.
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  - id: already_collected
+    npcText: This Citizen ID has already been collected.
+    options:
+    - playerText: Thank you.
+      nextNodeId: '@end'
+      debugEvent: 
+    endAfterNpcLine: 0
+  startNodeId: start

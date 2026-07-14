@@ -14,12 +14,24 @@ public class CommunicateUI : MonoBehaviour
 
     private void Awake()
     {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+
         Instance = this;
 
         if (root == null)
             root = gameObject;
 
         HideImmediate();
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this)
+            Instance = null;
     }
 
     public void Show(string message, float duration = 5f)

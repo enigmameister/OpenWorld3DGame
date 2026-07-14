@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using Object = UnityEngine.Object;
-
+using UnityEngine.SceneManagement;
 public class DevConsole : MonoBehaviour
 {
     [Header("Fade")]
@@ -65,12 +65,12 @@ public class DevConsole : MonoBehaviour
         };
 
         // komendy wymagające FRAUD:
-        _commands["RESET"] = RequireFraud(args => { CheatState.ResetAll(); ApplyBoltToMovement(); PrintResult("Cheats reset"); });
+        _commands["RESETCHEATS"] = RequireFraud(args =>{ CheatState.ResetAll(); ApplyBoltToMovement(); PrintResult("Cheats reset"); });
         _commands["SAIYAN"] = RequireFraud(args => { CheatState.Invincible = true; PrintResult("Invincibility ON"); });
         _commands["CO2"] = RequireFraud(args => { CheatState.InfiniteStamina = true; PrintResult("Infinite Stamina ON"); });
         _commands["ELWRAY"] = RequireFraud(args => { CheatState.InfiniteAmmo = true; PrintResult("Infinite Ammo ON"); });
         _commands["ALLIANCE"] = RequireFraud(args => { CheatState.Alliance = true; PrintResult("Alliance ON"); });
-
+        _commands["RESET"] = args => { StartCoroutine(RestartGameRoutine()); };
         _commands["BOLT"] = RequireFraud(args =>
         {
             if (args.Length >= 2 && float.TryParse(args[1], System.Globalization.NumberStyles.Float,
@@ -339,9 +339,6 @@ public class DevConsole : MonoBehaviour
 
         _isTransitioning = false;
     }
-
-
-
     private void CachePrevLockState()
     {
         _prevMoveLocked = PlayerMovement.IsMovementLocked;
@@ -465,4 +462,46 @@ public class DevConsole : MonoBehaviour
         if (logText) logText.text = "Console cleared";
     }
 
+    private IEnumerator RestartGameRoutine()
+    {
+        PrintResult("Resetting game...");
+
+        // Przywrócenie czasu, jeśli gra była zapauzowana.
+        Time.timeScale = 1f;
+
+        // Wyłączenie stanów konsoli przed przeładowaniem sceny.
+        isConsoleOpen = false;
+        IsOpen = false;
+
+        if (_fadeRoutine != null)
+        {
+            StopCoroutine(_fadeRoutine);
+            _fadeRoutine = null;
+        }
+
+        _isTransitioning = false;
+
+        if (consoleCanvasGroup != null)
+        {
+            consoleCanvasGroup.alpha = 0f;
+            consoleCanvasGroup.interactable = false;
+            consoleCanvasGroup.blocksRaycasts = false;
+        }
+
+        if (consolePanel != null)
+            consolePanel.SetActive(false);
+
+        PlayerMovement.IsMovementLocked = false;
+        MouseLook.IsLookLocked = false;
+
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+
+        // Jedna klatka, żeby UI zdążyło się zamknąć.
+        yield return null;
+
+        Scene activeScene = SceneManager.GetActiveScene();
+
+        SceneManager.LoadScene(activeScene.buildIndex);
+    }
 }

@@ -15,14 +15,23 @@ public class DoubleDoorsManualController : MonoBehaviour
     [Header("Closing")]
     [SerializeField] private float closeDelay = 0.45f;
 
-    [Tooltip("Jeœli TRUE, drzwi nie zamkn¹ siê dopóki ktoœ jest w TriggerDetection.")]
-    [SerializeField] private bool requireDetectionEmptyToClose = true;
+    [Header("Opening Hours")]
+    [SerializeField] private bool useOpeningHours = false;
+
+    [SerializeField, Range(0, 23)] private int openHour = 7;
+    [SerializeField, Range(0, 23)] private int closeHour = 15;
+
+    [Tooltip("Jeœli TRUE, drzwi pozostaj¹ otwarte niezale¿nie od godzin.")]
+    [SerializeField] private bool forceAlwaysOpenAllowed = false;
+
+    [Tooltip("Jeœli TRUE, po zamkniêciu godzin drzwi zamkn¹ siê, gdy Detection bêdzie puste.")]
+    [SerializeField] private bool closeWhenOutOfHours = true;
 
     [Header("Debug")]
     [SerializeField] private bool debugLogs = false;
 
-    private readonly HashSet<Transform> directionActors = new();
-    private readonly HashSet<Transform> detectionActors = new();
+    private readonly Dictionary<Transform, int> directionActors = new();
+    private readonly Dictionary<Transform, int> detectionActors = new();
 
     private int openBoolHash;
     private int openSideHash;
@@ -47,26 +56,47 @@ public class DoubleDoorsManualController : MonoBehaviour
         CleanupNullActors(directionActors);
         CleanupNullActors(detectionActors);
 
-        // 1. Otwieranie robi TYLKO TriggerOutside / TriggerInside.
+        if (debugLogs)
+        {
+            Debug.Log(
+                $"[DoubleDoors] isOpen={isOpen}, direction={directionActors.Count}, detection={detectionActors.Count}",
+                this
+            );
+        }
+
+        // Trigger kierunkowy otwiera drzwi.
         if (directionActors.Count > 0)
         {
             closeTimer = closeDelay;
 
-            if (!isOpen)
-                SetOpen(true, lastOpenSide);
+            if (CanOpenNow())
+            {
+                if (!isOpen)
+                    SetOpen(true, lastOpenSide);
+            }
 
             return;
         }
 
-        // 2. TriggerDetection NIE otwiera drzwi.
-        // Jeœli drzwi s¹ ju¿ otwarte, Detection tylko trzyma je otwarte.
+        // Detection tylko trzyma ju¿ otwarte drzwi.
         if (isOpen && detectionActors.Count > 0)
         {
             closeTimer = closeDelay;
             return;
         }
 
-        // 3. Zamykaj dopiero gdy nikt nie jest w direction ani detection.
+        // Poza godzinami te¿ zamykaj dopiero gdy detection jest puste.
+        if (isOpen && closeWhenOutOfHours && !CanOpenNow())
+        {
+            closeTimer -= Time.deltaTime;
+
+            if (closeTimer <= 0f)
+                SetOpen(false, lastOpenSide);
+
+            return;
+        }
+
+        // Normalne zamykanie po odejœciu.
         if (isOpen)
         {
             closeTimer -= Time.deltaTime;
@@ -83,17 +113,31 @@ public class DoubleDoorsManualController : MonoBehaviour
         if (actor == null)
             return;
 
-        directionActors.Add(actor);
+        bool wasDirectionEmpty = directionActors.Count == 0;
 
-        // Na razie zawsze ustaw kierunek z triggera, ¿eby ³atwo sprawdziæ scenê.
-        lastOpenSide = side;
+        AddActor(directionActors, actor);
+
+        // Kierunek ustawiamy tylko gdy drzwi s¹ zamkniête
+        // i to jest pierwsze wejœcie w trigger kierunkowy.
+        // Dziêki temu Outside + Inside nie przepisuj¹ sobie strony nawzajem.
+        if (!isOpen && wasDirectionEmpty)
+            lastOpenSide = side;
 
         closeTimer = closeDelay;
 
         if (debugLogs)
             Debug.Log($"[DoubleDoors] Direction ENTER: {actor.name}, side={side}", this);
 
-        SetOpen(true, lastOpenSide);
+        if (!CanOpenNow())
+        {
+            if (debugLogs)
+                Debug.Log($"[DoubleDoors] Blocked by opening hours. Hour={GameTime.Hour}", this);
+
+            return;
+        }
+
+        if (!isOpen)
+            SetOpen(true, lastOpenSide);
     }
 
     public void NotifyTriggerExit(Collider other)
@@ -102,7 +146,7 @@ public class DoubleDoorsManualController : MonoBehaviour
         if (actor == null)
             return;
 
-        directionActors.Remove(actor);
+        RemoveActor(directionActors, actor);
 
         if (debugLogs)
             Debug.Log($"[DoubleDoors] Direction EXIT: {actor.name}", this);
@@ -115,14 +159,13 @@ public class DoubleDoorsManualController : MonoBehaviour
         if (actor == null)
             return;
 
-        detectionActors.Add(actor);
+        AddActor(detectionActors, actor);
         closeTimer = closeDelay;
 
         if (debugLogs)
             Debug.Log($"[DoubleDoors] Detection ENTER: {actor.name}", this);
 
-        // NIE otwieramy tutaj drzwi.
-        // Detection tylko blokuje zamkniêcie ju¿ otwartych drzwi.
+        // Detection NIE otwiera drzwi.
     }
 
     public void NotifyDetectionExit(Collider other)
@@ -131,7 +174,7 @@ public class DoubleDoorsManualController : MonoBehaviour
         if (actor == null)
             return;
 
-        detectionActors.Remove(actor);
+        RemoveActor(detectionActors, actor);
 
         if (debugLogs)
             Debug.Log($"[DoubleDoors] Detection EXIT: {actor.name}", this);
@@ -208,5 +251,66 @@ public class DoubleDoorsManualController : MonoBehaviour
         directionActors.Clear();
         detectionActors.Clear();
         closeTimer = 0f;
+    }
+
+    private bool CanOpenNow()
+    {
+        if (forceAlwaysOpenAllowed)
+            return true;
+
+        if (!useOpeningHours)
+            return true;
+
+        return GameTime.IsTimeBetweenHours(openHour, closeHour);
+    }
+
+    private void AddActor(Dictionary<Transform, int> dict, Transform actor)
+    {
+        if (actor == null)
+            return;
+
+        if (dict.TryGetValue(actor, out int count))
+            dict[actor] = count + 1;
+        else
+            dict.Add(actor, 1);
+    }
+
+    private void RemoveActor(Dictionary<Transform, int> dict, Transform actor)
+    {
+        if (actor == null)
+            return;
+
+        if (!dict.TryGetValue(actor, out int count))
+            return;
+
+        count--;
+
+        if (count <= 0)
+            dict.Remove(actor);
+        else
+            dict[actor] = count;
+    }
+
+    private void CleanupNullActors(Dictionary<Transform, int> dict)
+    {
+        if (dict.Count == 0)
+            return;
+
+        List<Transform> toRemove = null;
+
+        foreach (var kvp in dict)
+        {
+            if (kvp.Key == null || !kvp.Key.gameObject.activeInHierarchy)
+            {
+                toRemove ??= new List<Transform>();
+                toRemove.Add(kvp.Key);
+            }
+        }
+
+        if (toRemove == null)
+            return;
+
+        foreach (var t in toRemove)
+            dict.Remove(t);
     }
 }

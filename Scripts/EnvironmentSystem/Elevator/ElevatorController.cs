@@ -129,15 +129,33 @@ public class ElevatorController : MonoBehaviour
     /// <summary> Wybór piętra Z WEWNĄTRZ kabiny </summary>
     public void RequestFloor(int floor)
     {
-        if (!IsFloorValid(floor) || floor == _currentFloor) return;
+        if (!IsFloorValid(floor))
+            return;
+
+        // Jeśli wybrano aktualne piętro, nie rób zamykania/otwierania.
+        if (floor == _currentFloor)
+        {
+            if (!_busy)
+            {
+                _waitingForCarRequest = true;
+
+                if (carDoor) carDoor.Open(false);
+                if (FloorDoorNow) FloorDoorNow.Open(false);
+
+                SetCurrentLevelUI(_currentFloor, 0);
+                UpdateDisplays();
+            }
+
+            return;
+        }
 
         EnqueueOnce(floor);
 
-        // jeśli czekaliśmy na wybór w kabinie – kończ czekanie i rusz
-        if (_waitingForCarRequest) _waitingForCarRequest = false;
+        // Klucz: wybór piętra w kabinie kończy tryb czekania.
+        _waitingForCarRequest = false;
 
-        // pokaż strzałkę kierunku natychmiast po wyborze
-        if (floorUI) floorUI.SetDirection(floor > _currentFloor ? +1 : -1);
+        if (floorUI)
+            floorUI.SetDirection(floor > _currentFloor ? +1 : -1);
 
         TryNext();
     }
@@ -154,8 +172,23 @@ public class ElevatorController : MonoBehaviour
 
     void TryNext()
     {
-        if (_busy || _waitingForCarRequest || _queue.Count == 0) return;
+        if (_busy)
+            return;
+
+        if (_waitingForCarRequest)
+            return;
+
+        if (_queue.Count == 0)
+            return;
+
         _targetFloor = _queue.Dequeue();
+
+        if (_targetFloor == _currentFloor)
+        {
+            _targetFloor = -1;
+            UpdateDisplays();
+            return;
+        }
 
         if (floorUI)
         {
@@ -271,24 +304,27 @@ public class ElevatorController : MonoBehaviour
     }
     IEnumerator CloseBothDoorsSafely()
     {
-        // dopóki ktoś stoi w świetle drzwi — utrzymuj otwarte
+        // Dopóki ktoś stoi w świetle drzwi — utrzymuj otwarte.
         while (IsSomethingInAnyZone())
         {
             Coroutine oa = null, ob = null;
+
             if (carDoor) oa = StartCoroutine(carDoor.OpenRoutine());
             if (FloorDoorNow) ob = StartCoroutine(FloorDoorNow.OpenRoutine());
 
             if (oa != null) yield return oa;
             if (ob != null) yield return ob;
 
-            yield return null;
+            yield return new WaitForSeconds(0.1f);
         }
 
-        // zamykanie równolegle
         Coroutine ca = null, cb = null;
 
-        if (carDoor) ca = StartCoroutine(carDoor.CloseRoutine(() => carDoor.Obstructed));
-        if (FloorDoorNow) cb = StartCoroutine(FloorDoorNow.CloseRoutine(() => FloorDoorNow.Obstructed));
+        if (carDoor)
+            ca = StartCoroutine(carDoor.CloseRoutine(() => carDoor.Obstructed));
+
+        if (FloorDoorNow)
+            cb = StartCoroutine(FloorDoorNow.CloseRoutine(() => FloorDoorNow.Obstructed));
 
         if (ca != null) yield return ca;
         if (cb != null) yield return cb;

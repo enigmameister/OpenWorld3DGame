@@ -58,7 +58,7 @@ public class LightController : MonoBehaviour
 
         OnGlobalVehicleLightsChanged?.Invoke(state);
 
-        Debug.Log($"💡 Światła {(state ? "WŁĄCZONE" : "WYŁĄCZONE")} (godzina {dayNightCycle.CurrentHour}:00)");
+      //  Debug.Log($"💡 Światła {(state ? "WŁĄCZONE" : "WYŁĄCZONE")} (godzina {dayNightCycle.CurrentHour}:00)");
     }
 
     public bool ShouldLightsBeOnNow()
